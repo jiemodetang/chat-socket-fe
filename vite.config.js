@@ -13,8 +13,8 @@ export default defineConfig({
   ],
 	server: {
 	  proxy: {
-		// '/api': 'http://localhost:3000'
-    '/api': 'http://82.156.51.236:3000'
+		'/api': 'http://localhost:3000'
+    // '/api': 'http://82.156.51.236:3000'
 	  }
 	},
   css: {

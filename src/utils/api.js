@@ -1,4 +1,4 @@
-import { config } from '../config/index.js'
+import { currentConfig } from '../config/index.js'
 
 // 创建请求函数
 const request = (options) => {
@@ -13,34 +13,110 @@ const request = (options) => {
       header.Authorization = `Bearer ${token}`
     }
 
+    const baseUrl = currentConfig.apiUrl
+    const url = `${baseUrl}/api${options.url}`
+
     uni.request({
-      url: config.socketServerUrl + '/api' + options.url,
+      url: url,
       method: options.method || 'GET',
       data: options.data,
       header: header,
       success: (res) => {
-        if (res.statusCode === 200) {
-          resolve(res.data.data)
-        } else if (res.statusCode === 401) {
-          // 未授权，清除token并跳转到登录页
-          uni.removeStorageSync('token')
-          uni.removeStorageSync('user')
-          uni.reLaunch({
-            url: '/pages/login/index'
-          })
-          reject(new Error('未授权'))
-        } else {
-          reject(new Error(res.data.message || '请求失败'))
+        // 处理业务层面的错误
+        
+        // 提取错误信息的辅助函数
+        const extractErrorMessage = (data) => {
+          if (typeof data === 'string' && data.includes('<!DOCTYPE html>')) {
+            // 从HTML响应中提取错误信息
+            const match = data.match(/Error: (.*?)<br>/);
+            return match ? match[1].trim() : '服务器返回了错误信息';
+          }
+          return data?.message || data?.error || '请求失败';
+        };
+
+        // 处理 HTTP 状态码错误
+        if (res.statusCode >= 400) {
+          const errorMessage = extractErrorMessage(res.data);
+          console.log(errorMessage);
+          
+          // 根据不同的状态码处理不同的错误
+          switch (res.statusCode) {
+            case 400:
+              uni.showToast({
+                title: errorMessage,
+                icon: 'none',
+                duration: 2000
+              });
+              break;
+            case 401:
+              // 清除登录状态
+              uni.removeStorageSync('token');
+              uni.removeStorageSync('user');
+              
+              // 如果不是登录接口，才跳转到登录页
+              if (!options.url.includes('/auth/login')) {
+                uni.reLaunch({
+                  url: '/pages/login/index'
+                });
+              }
+              break;
+            case 403:
+              uni.showToast({
+                title: errorMessage || '没有权限执行此操作',
+                icon: 'none',
+                duration: 2000
+              });
+              break;
+            case 404:
+              uni.showToast({
+                title: errorMessage || '请求的资源不存在',
+                icon: 'none',
+                duration: 2000
+              });
+              break;
+            case 500:
+              uni.showToast({
+                title: errorMessage || '服务器内部错误',
+                icon: 'none',
+                duration: 2000
+              });
+              break;
+            default:
+              uni.showToast({
+                title: errorMessage,
+                icon: 'none',
+                duration: 2000
+              });
+          }
+          
+          reject(new Error(errorMessage));
+          return;
         }
+
+        // 处理业务逻辑错误
+        if (res.data?.status === 'error' || res.data?.error) {
+          const errorMessage = extractErrorMessage(res.data);
+          uni.showToast({
+            title: errorMessage,
+            icon: 'none',
+            duration: 2000
+          });
+          reject(new Error(errorMessage));
+          return;
+        }
+
+        // 处理成功响应
+        resolve(res.data?.data || res.data);
       },
       fail: (err) => {
-        console.error('Request error:', err)
+        console.error('Request error:', err);
+        const errorMessage = err.errMsg || '网络请求失败，请稍后再试';
         uni.showToast({
-          title: '网络请求失败，请稍后再试',
+          title: errorMessage,
           icon: 'none',
           duration: 2000
-        })
-        reject(err)
+        });
+        reject(err);
       }
     })
   })

@@ -164,7 +164,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
 import { onLoad } from '@dcloudio/uni-app'
-import { config } from '../../config'
+import { currentConfig } from '../../config'
 
 
 const store = useStore()
@@ -664,7 +664,7 @@ const uploadImage = async (filePath) => {
     uni.showLoading({ title: '上传中...' })
     
     uni.uploadFile({
-      url: config.socketServerUrl+'/api/chats/upload-image',
+      url: currentConfig.socketServerUrl+'/api/chats/upload-image',
       filePath: filePath,
       name: 'image',
       header: {

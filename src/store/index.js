@@ -1,7 +1,7 @@
 import { createStore } from 'vuex'
 import io from 'socket.io-client'
 import api from '../utils/api'
-import { config } from '../config'
+import { currentConfig } from '../config'
 
 const store = createStore({
   state: {
@@ -170,7 +170,7 @@ const store = createStore({
     connectSocket({ commit, state }) {
       if (state.socket) return
 
-      const socket = io(config.socketServerUrl, {
+      const socket = io(currentConfig.socketServerUrl, {
         auth: {
           token: state.token
         }
