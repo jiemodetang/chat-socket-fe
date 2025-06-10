@@ -18,7 +18,9 @@
             "autoclose": true,
             "delay": 0
         },
-        "modules": {},
+        "modules": {
+            "Socket": {}
+        },
         "distribute": {
             "android": {
                 "permissions": [
@@ -60,10 +62,25 @@
             "urlCheck": false,
             "es6": true,
             "postcss": true,
-            "minified": true
+            "minified": false,
+            "checkSiteMap": false,
+            "checkInvalidKey": false,
+            "babelSetting": {
+                "ignore": [],
+                "disablePlugins": [],
+                "outputPath": ""
+            },
+            "uglifyFileName": false,
+            "packNpmManually": false,
+            "packNpmRelationList": [],
+            "condition": false
         },
         "usingComponents": true,
-        "permission": {}
+        "permission": {},
+        "optimization": {
+            "subPackages": true
+        },
+        "lazyCodeLoading": "requiredComponents"
     },
     "mp-alipay": {
         "usingComponents": true

@@ -43,7 +43,7 @@
             <!-- 消息内容 -->
             <view class="message-content">
               <!-- 发送者名称 -->
-              <text v-if="isGroupChat" class="sender-name">{{ getSenderName(message) }}</text>
+              <text v-if="isGroupChat && !isSelfMessage(message)" class="sender-name">{{ getSenderName(message) }}</text>
 
               <!-- 消息内容区域 -->
               <view class="message-text" :class="{ 'self-message-text': isSelfMessage(message) }">
@@ -84,7 +84,7 @@
               <view class="message-status">
                 <text class="status-time">{{ formatTime(message.createdAt) }}</text>
                 <text v-if="message.readBy && message.readBy.length > 0" class="read-status">
-                  已读 {{ message.readBy.length }} 人
+                  {{ getReadStatus(message) }}
                 </text>
               </view>
             </view>
@@ -97,7 +97,12 @@
     <view class="input-area">
       <view class="input-wrapper">
         <!-- 录音按钮 -->
-        <view v-if="isRecorderSupported" class="voice-btn" @touchstart="startRecording" @touchend="stopRecording" @touchcancel="cancelRecording">
+        <view v-if="isRecorderSupported" 
+          class="voice-btn" 
+          @touchstart.prevent="startRecording" 
+          @touchend.prevent="stopRecording" 
+          @touchcancel.prevent="cancelRecording"
+          @touchmove.prevent="handleTouchMove">
           <u-icon name="mic" size="24" color="#666"></u-icon>
         </view>
 
@@ -155,6 +160,12 @@
             </view>
             <text class="grid-item-text">拍摄</text>
           </view>
+          <view class="grid-item" @click="chooseFile">
+            <view class="grid-item-icon">
+              <u-icon name="file-text" size="32" color="#666"></u-icon>
+            </view>
+            <text class="grid-item-text">文件</text>
+          </view>
         </view>
       </view>
     </u-popup>
@@ -165,9 +176,23 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
 import { onLoad } from '@dcloudio/uni-app'
 import { currentConfig } from '../../config'
-
+import { useWebSocket } from '@/composables/useWebSocket'
+import { uploadFile } from '@/utils/upload'
 
 const store = useStore()
+const {
+  initWebSocket,
+  sendMessage: sendWebSocketMessage,
+  sendTypingStatus,
+  sendStopTypingStatus,
+  markMessageAsRead,
+  isConnected,
+  onlineUsers,
+  currentUser: wsCurrentUser,
+  getTypingUsers,
+  getUnreadMessageCount
+} = useWebSocket()
+
 const chatId = ref('')
 const messageText = ref('')
 const isRefreshing = ref(false)
@@ -184,7 +209,14 @@ const isRecorderSupported = ref(false)
 const isScrolledToBottom = ref(true)
 
 // 获取当前用户
-const currentUser = computed(() => store.getters.currentUser)
+const currentUser = computed(() => {
+  const user = store.getters.currentUser;
+  if (!user || !user._id) {
+    console.warn('Current user is not properly initialized');
+    return null;
+  }
+  return user;
+})
 
 // 获取当前聊天的消息
 const messages = computed(() => store.getters.currentChatMessages)
@@ -197,6 +229,96 @@ const isGroupChat = computed(() => {
 
 // 判断是否可以发送消息
 const canSend = computed(() => messageText.value.trim().length > 0)
+
+// 设置聊天标题
+const setChatTitle = (chat) => {
+  if (!chat) return
+  
+  let title = ''
+  if (chat.isGroupChat) {
+    title = chat.chatName || '群聊'
+  } else {
+    // 在单聊中，显示对方的名称
+    const currentUserEmail = store.getters.currentUser?.email
+    const otherUser = chat.users.find(u => u.email !== currentUserEmail)
+    title = otherUser ? otherUser.username : '未知用户'
+  }
+  
+  // 设置导航栏标题
+  uni.setNavigationBarTitle({
+    title: title
+  })
+}
+
+// 获取聊天消息
+const fetchMessages = async () => {
+  if (!chatId.value) return
+  
+  try {
+    isLoadingMore.value = true
+    const result = await store.dispatch('fetchMessages', chatId.value)
+    if (!result.success) {
+      throw new Error('获取消息失败')
+    }
+    
+    // 标记消息为已读
+    store.commit('CLEAR_UNREAD', chatId.value)
+    markMessagesAsRead()
+    
+    // 通过socket通知服务器消息已读
+    if (messages.value && currentUser.value) {
+      messages.value.forEach(msg => {
+        if (msg.readBy && !msg.readBy.includes(currentUser.value._id)) {
+          markMessageAsRead(chatId.value, msg._id)
+        }
+      })
+    }
+    
+    // 滚动到底部
+    nextTick(() => {
+      scrollToBottom()
+    })
+  } catch (error) {
+    console.error('Failed to fetch messages:', error)
+    uni.showToast({
+      title: '获取消息失败',
+      icon: 'none'
+    })
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+// 加载更多消息
+const loadMoreMessages = async () => {
+  if (isLoadingMore.value) return
+  
+  try {
+    isLoadingMore.value = true
+    const result = await store.dispatch('loadMoreMessages', chatId.value)
+    if (!result.success) {
+      throw new Error('加载更多消息失败')
+    }
+  } catch (error) {
+    console.error('Failed to load more messages:', error)
+    uni.showToast({
+      title: '加载更多消息失败',
+      icon: 'none'
+    })
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+// 下拉刷新
+const onRefresh = async () => {
+  isRefreshing.value = true
+  try {
+    await fetchMessages()
+  } finally {
+    isRefreshing.value = false
+  }
+}
 
 // 页面加载时获取聊天ID
 onLoad((option) => {
@@ -249,6 +371,56 @@ const checkRecorderSupport = () => {
   // #endif
 }
 
+// 开始录音
+const startRecording = () => {
+  if (!isRecorderSupported.value) {
+    uni.showToast({
+      title: '当前平台不支持录音功能',
+      icon: 'none'
+    })
+    return
+  }
+
+  showRecordingTip.value = true
+  recordingTipText.value = '松开结束'
+
+  // 开始录音
+  recorderManager.value.start({
+    duration: 60000, // 最长录音时间，单位ms
+    sampleRate: 44100,
+    numberOfChannels: 1,
+    encodeBitRate: 192000,
+    format: 'mp3'
+  })
+}
+
+// 停止录音
+const stopRecording = () => {
+  if (!showRecordingTip.value) return
+  
+  showRecordingTip.value = false
+  recordingTipText.value = '按住说话'
+  
+  // 停止录音
+  recorderManager.value.stop()
+}
+
+// 取消录音
+const cancelRecording = () => {
+  if (!showRecordingTip.value) return
+  
+  showRecordingTip.value = false
+  recordingTipText.value = '按住说话'
+  
+  // 停止录音
+  recorderManager.value.stop()
+  
+  uni.showToast({
+    title: '已取消录音',
+    icon: 'none'
+  })
+}
+
 // 初始化录音管理器
 const initRecorderManager = () => {
   if (!isRecorderSupported.value) {
@@ -260,8 +432,14 @@ const initRecorderManager = () => {
     // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
     recorderManager.value = uni.getRecorderManager()
     
+    // 监听录音开始事件
+    recorderManager.value.onStart(() => {
+      console.log('录音开始')
+    })
+    
     // 监听录音结束事件
     recorderManager.value.onStop((res) => {
+      console.log('录音结束:', res)
       if (res.duration < 1000) {
         uni.showToast({
           title: '录音时间太短',
@@ -271,7 +449,8 @@ const initRecorderManager = () => {
       }
       
       tempFilePath.value = res.tempFilePath
-      uploadAudio(res.tempFilePath)
+      // 上传音频文件，并传入录音时长
+      uploadAudio(res.tempFilePath, res.duration)
     })
 
     // 监听录音错误事件
@@ -283,6 +462,12 @@ const initRecorderManager = () => {
       })
       showRecordingTip.value = false
     })
+
+    // 监听录音帧数据
+    recorderManager.value.onFrameRecorded((res) => {
+      const { frameBuffer, isLastFrame } = res
+      console.log('录音帧数据:', frameBuffer, isLastFrame)
+    })
     // #endif
   } catch (error) {
     console.error('初始化录音管理器失败:', error)
@@ -292,179 +477,57 @@ const initRecorderManager = () => {
 // 页面加载完成
 onMounted(() => {
   // 检查是否已登录
-  if (!store.getters.isAuthenticated) {
+
+  if (!store.getters.isAuthenticated || !store.getters.currentUser?._id) {
     uni.redirectTo({
       url: '/pages/login/index'
-    })
-    return
+    });
+    return;
   }
   
+  // 初始化WebSocket连接
+  initWebSocket(store.state.token);
+  
   // 检查录音支持
-  checkRecorderSupport()
+  checkRecorderSupport();
   // 初始化录音管理器
-  initRecorderManager()
+  initRecorderManager();
   
   // 标记所有消息为已读
   if (chatId.value) {
-    store.commit('CLEAR_UNREAD', chatId.value)
-    
-    // 通过socket通知服务器消息已读
-    if (messages.value) {
-      messages.value.forEach(msg => {
-        if (!msg.readBy.includes(currentUser.value._id)) {
-          store.dispatch('markMessageRead', msg._id)
-        }
-      })
-    }
-    
-    // 加入聊天室
-    if (store.state.socket && store.state.isConnected) {
-      store.state.socket.emit('join-chat', chatId.value)
-    }
+    store.commit('CLEAR_UNREAD', chatId.value);
+    markMessagesAsRead();
   }
-
-  // 监听新消息
-
 })
 
 // 页面卸载
 onUnmounted(() => {
-  // 离开聊天室
-  if (store.state.socket && store.state.isConnected && chatId.value) {
-    store.state.socket.emit('leave-chat', chatId.value)
-  }
   // 清除当前聊天
   store.commit('SET_CURRENT_CHAT', null)
-
 })
-
-// 监听当前聊天变化
-watch(() => store.state.currentChat, (newChatId, oldChatId) => {
-  if (newChatId && newChatId !== chatId.value) {
-    // 如果之前有聊天，先离开之前的聊天室
-    // if (oldChatId && store.state.socket && store.state.isConnected) {
-    //   store.state.socket.emit('leave-chat', oldChatId)
-    // }
-    
-    chatId.value = newChatId
-    fetchMessages()
-
-    // 设置导航栏标题
-    const chat = store.state.chats.find(c => c._id === newChatId)
-    if (chat) {
-      setChatTitle(chat)
-    }
-
-    // 加入新的聊天室
-    // if (store.state.socket && store.state.isConnected) {
-    //   store.state.socket.emit('join-chat', newChatId)
-    // }
-  }
-})
-
-// 设置聊天标题
-const setChatTitle = (chat) => {
-  let title = '聊天'
-
-  if (chat) {
-    if (chat.isGroupChat) {
-      title = chat.chatName || '群聊'
-    } else {
-      // 在单聊中，显示对方的名称
-      const currentUserEmail = currentUser.value?.email
-      const otherUser = chat.users.find(u => u.email !== currentUserEmail)
-      title = otherUser ? otherUser.username : '聊天'
-    }
-  }
-
-  uni.setNavigationBarTitle({ title })
-}
-
-// 获取聊天消息
-const fetchMessages = async () => {
-  if (!chatId.value) return
-
-  try {
-    await store.dispatch('fetchMessages', chatId.value)
-    // 延迟执行滚动，确保消息列表已经渲染
-    setTimeout(() => {
-      scrollToBottom()
-    }, 100)
-  } catch (error) {
-    console.error('Failed to fetch messages:', error)
-    uni.showToast({
-      title: '获取消息失败',
-      icon: 'none'
-    })
-  } finally {
-  }
-}
-
-// 下拉刷新，加载更多历史消息
-const onRefresh = async () => {
-  isRefreshing.value = true
-  try {
-    // 这里可以实现加载更多历史消息的逻辑
-    // 目前API没有提供分页功能，所以这里只是刷新当前消息
-    await fetchMessages()
-  } finally {
-    isRefreshing.value = false
-  }
-}
-
-// 加载更多历史消息
-const loadMoreMessages = () => {
-  // 这里可以实现加载更多历史消息的逻辑
-  // 目前API没有提供分页功能，所以这里只是一个示例
-  if (isLoadingMore.value) return
-
-}
 
 // 发送消息
 const sendMessage = async () => {
-  if (!canSend.value || !chatId.value) return
-
+  if (!messageText.value.trim() || !chatId.value) return
+  
   const content = messageText.value.trim()
   messageText.value = ''
   
-  // 优先通过socket发送消息
-  if (store.state.socket && store.state.isConnected) {
-    store.state.socket.emit('send-message', {
-      chatId: chatId.value,
-      content,
-      messageType: 'text'
+  try {
+    // 发送消息到WebSocket
+    sendWebSocketMessage(chatId.value, content, 'text')
+    
+    // 滚动到底部
+    nextTick(() => {
+      scrollToBottom()
     })
-  } else {
-    // 兼容API方式
-    try {
-      const result = await store.dispatch('sendMessage', {
-        chatId: chatId.value,
-        content,
-        messageType: 'text'
-      })
-      if (result.success) {
-        nextTick(() => {
-          scrollToBottom()
-        })
-      } else {
-        uni.showToast({
-          title: '发送消息失败',
-          icon: 'none'
-        })
-      }
-    } catch (error) {
-      console.error('Failed to send message:', error)
-      uni.showToast({
-        title: '发送消息失败',
-        icon: 'none'
-      })
-    }
-    return
+  } catch (error) {
+    console.error('Failed to send message:', error)
+    uni.showToast({
+      title: '发送消息失败',
+      icon: 'none'
+    })
   }
-  // 发送成功后滚动到底部
-  nextTick(() => {
-    scrollToBottom()
-  })
 }
 
 // 滚动到底部
@@ -520,17 +583,38 @@ const showDateDivider = (message, index) => {
 
 // 判断是否是自己发送的消息
 const isSelfMessage = (message) => {
-  return message.sender?._id === currentUser.value?._id
+  if (!message || !message.sender || !currentUser.value || !currentUser.value._id) return false;
+  return message.sender._id === currentUser.value._id;
 }
 
 // 获取发送者头像
 const getSenderAvatar = (message) => {
-  return message.sender?.avatar || '/static/default-avatar.png'
+  if (!message || !message.sender) return '/static/default-avatar.png'
+  
+  // 如果是群聊，显示发送者头像
+  if (isGroupChat.value) {
+    return message.sender.avatar || '/static/default-avatar.png'
+  }
+  
+  // 如果是单聊，显示对方头像
+  const currentUserEmail = store.getters.currentUser?.email
+  const otherUser = store.state.chats.find(c => c._id === chatId.value)?.users.find(u => u.email !== currentUserEmail)
+  return otherUser?.avatar || '/static/default-avatar.png'
 }
 
 // 获取发送者名称
 const getSenderName = (message) => {
-  return message.sender?.username || '未知用户'
+  if (!message || !message.sender) return '未知用户'
+  
+  // 如果是群聊，显示发送者名称
+  if (isGroupChat.value) {
+    return message.sender.username || '未知用户'
+  }
+  
+  // 如果是单聊，显示对方名称
+  const currentUserEmail = store.getters.currentUser?.email
+  const otherUser = store.state.chats.find(c => c._id === chatId.value)?.users.find(u => u.email !== currentUserEmail)
+  return otherUser?.username || '未知用户'
 }
 
 // 格式化日期
@@ -615,13 +699,13 @@ const formatFileSize = (size) => {
   }
   return `${size.toFixed(2)} ${units[index]}`
 }
+
+// 处理输入状态
 const handleTyping = () => {
-  if (store.state.socket && store.state.isConnected && chatId.value) {
-    if (messageText.value.trim().length > 0) {
-      store.state.socket.emit('typing', chatId.value)
-    } else {
-      store.state.socket.emit('stop-typing', chatId.value)
-    }
+  if (messageText.value.trim().length > 0) {
+    sendTypingStatus(chatId.value)
+  } else {
+    sendStopTypingStatus(chatId.value)
   }
 }
 
@@ -658,197 +742,97 @@ const chooseImage = () => {
   })
 }
 
+// 解码文件名
+const decodeFileName = (fileName) => {
+  try {
+    // 尝试解码文件名
+    return decodeURIComponent(escape(fileName))
+  } catch (error) {
+    console.error('Failed to decode filename:', error)
+    return fileName
+  }
+}
+
 // 上传图片
 const uploadImage = async (filePath) => {
-  try {
-    uni.showLoading({ title: '上传中...' })
-    
-    uni.uploadFile({
-      url: currentConfig.socketServerUrl+'/api/chats/upload-image',
-      filePath: filePath,
-      name: 'image',
-      header: {
-        'Authorization': `Bearer ${store.state.token}`
-      },
-      success: (res) => {
-        console.log('Upload response:', res)
-        if (res.statusCode === 200) {
-          try {
-            const result = JSON.parse(res.data)
-            console.log('Parsed result:', result)
-            
-            if (result && result.data.url) {
-              if (store.state.socket && store.state.isConnected) {
-                store.state.socket.emit('send-message', {
-                  chatId: chatId.value,
-                  content: result.fileName || '图片',
-                  messageType: 'image',
-                  fileUrl: result.data.url,
-                  data: { url: result.data.url }
-                })
-              }
-            } else {
-              console.error('Invalid response format:', result)
-              uni.showToast({
-                title: '服务器返回数据格式错误',
-                icon: 'none'
-              })
-            }
-          } catch (parseError) {
-            console.error('Failed to parse response:', parseError)
-            console.error('Raw response data:', res.data)
-            uni.showToast({
-              title: '解析响应数据失败',
-              icon: 'none'
-            })
-          }
-        } else {
-          console.error('Upload failed with status:', res.statusCode)
-          console.error('Response:', res)
-          uni.showToast({
-            title: `上传失败 (${res.statusCode})`,
-            icon: 'none'
-          })
-        }
-      },
-      fail: (error) => {
-        console.error('Upload failed:', error)
-        uni.showToast({
-          title: '上传图片失败',
-          icon: 'none'
-        })
-      },
-      complete: () => {
-        uni.hideLoading()
-      }
-    })
-  } catch (error) {
-    console.error('Failed to upload image:', error)
-    uni.showToast({
-      title: '上传图片失败',
-      icon: 'none'
-    })
-    uni.hideLoading()
-  }
-}
-
-// 开始录音
-const startRecording = () => {
-  if (!isRecorderSupported.value) {
-    uni.showToast({
-      title: '当前平台不支持录音功能',
-      icon: 'none'
-    })
-    return
-  }
-
-  if (!recorderManager.value) {
-    initRecorderManager()
-    if (!recorderManager.value) {
+  uploadFile({
+    filePath,
+    type: 'image',
+    token: store.state.token,
+    onSuccess: (file) => {
+      // 拼接完整的图片URL并解码文件名
+      const fullUrl = currentConfig.apiUrl + file.url
+      const decodedFileName = decodeFileName(file.fileName)
+      sendWebSocketMessage(chatId.value, decodedFileName || '图片', 'image', fullUrl)
+    },
+    onError: (error) => {
       uni.showToast({
-        title: '录音功能初始化失败',
+        title: error,
         icon: 'none'
       })
-      return
     }
-  }
-  
-  showRecordingTip.value = true
-  recordingTipText.value = '松开结束'
-  
-  // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-  recorderManager.value.start({
-    duration: 60000, // 最长录音时间，单位ms
-    sampleRate: 16000,
-    numberOfChannels: 1,
-    encodeBitRate: 48000,
-    format: 'mp3'
   })
-  // #endif
-}
-
-// 停止录音
-const stopRecording = async () => {
-  if (!isRecorderSupported.value || !recorderManager.value) return
-  
-  showRecordingTip.value = false
-  // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-  recorderManager.value.stop()
-  // #endif
-}
-
-// 取消录音
-const cancelRecording = () => {
-  if (!isRecorderSupported.value || !recorderManager.value) return
-  
-  showRecordingTip.value = false
-  // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-  recorderManager.value.stop()
-  // #endif
 }
 
 // 上传音频文件
-const uploadAudio = async (filePath) => {
-  try {
-    uni.showLoading({ title: '上传中...' })
-    
-    uni.uploadFile({
-      url: config.socketServerUrl+'/api/chats/upload-audio',
-      filePath: filePath,
-      name: 'audio',
-      header: {
-        'Authorization': `Bearer ${store.state.token}`
-      },
-      success: (res) => {
-        if (res.statusCode === 200) {
-          try {
-            const result = JSON.parse(res.data)
-            if (result && result.data.url) {
-              if (store.state.socket && store.state.isConnected) {
-                store.state.socket.emit('send-message', {
-                  chatId: chatId.value,
-                  content: '语音消息',
-                  messageType: 'audio',
-                  fileUrl: result.data.url,
-                  duration: result.duration || 0
-                })
-              }
-            } else {
-              uni.showToast({
-                title: '服务器返回数据格式错误',
-                icon: 'none'
-              })
-            }
-          } catch (parseError) {
-            uni.showToast({
-              title: '解析响应数据失败',
-              icon: 'none'
-            })
-          }
-        } else {
+const uploadAudio = async (filePath, duration) => {
+  uploadFile({
+    filePath,
+    type: 'audio',
+    token: store.state.token,
+    onSuccess: (file) => {
+      // 拼接完整的音频URL并解码文件名
+      const fullUrl = currentConfig.apiUrl + file.url
+      const decodedFileName = decodeFileName(file.fileName)
+      // 发送音频消息，包含录音时长
+      sendWebSocketMessage(chatId.value, decodedFileName || '语音消息', 'audio', fullUrl, duration)
+    },
+    onError: (error) => {
+      uni.showToast({
+        title: error,
+        icon: 'none'
+      })
+    }
+  })
+}
+
+const chooseFile = () => {
+  // #ifdef APP-PLUS || H5
+  uni.chooseFile({
+    count: 1,
+    type: 'all',
+    success: async (res) => {
+      const tempFilePath = res.tempFilePaths[0]
+      const fileInfo = res.tempFiles[0]
+      
+      uploadFile({
+        filePath: tempFilePath,
+        type: 'file',
+        token: store.state.token,
+        onSuccess: (file) => {
+          // 拼接完整的文件URL并解码文件名
+          const fullUrl = currentConfig.apiUrl + file.url
+          const decodedFileName = decodeFileName(file.fileName)
+          sendWebSocketMessage(chatId.value, decodedFileName || '文件消息', 'file', fullUrl, fileInfo.size)
+        },
+        onError: (error) => {
           uni.showToast({
-            title: `上传失败 (${res.statusCode})`,
+            title: error,
             icon: 'none'
           })
         }
-      },
-      fail: (error) => {
-        uni.showToast({
-          title: '上传语音失败',
-          icon: 'none'
-        })
-      },
-      complete: () => {
-        uni.hideLoading()
-      }
-    })
-  } catch (error) {
-    uni.showToast({
-      title: '上传语音失败',
-      icon: 'none'
-    })
-    uni.hideLoading()
-  }
+      })
+      showPopup.value = false
+    }
+  })
+  // #endif
+  
+  // #ifdef MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
+  uni.showToast({
+    title: '小程序暂不支持选择文件',
+    icon: 'none'
+  })
+  // #endif
 }
 
 // 音频播放相关
@@ -917,6 +901,48 @@ const handleScroll = (e) => {
   isScrolledToBottom.value = scrollHeight - scrollTop - clientHeight < 50
 
 }
+
+// 获取消息已读状态文本
+const getReadStatus = (message) => {
+  if (!message || !message.readBy || !currentUser.value || !currentUser.value._id) return '';
+  
+  const readCount = message.readBy.length;
+  const chat = store.state.chats.find(c => c._id === chatId.value);
+  const totalCount = isGroupChat.value ? (chat?.users?.length || 0) : 2;
+  
+  if (isGroupChat.value) {
+    return `已读 ${readCount}/${totalCount}`;
+  } else {
+    return readCount > 1 ? '已读' : '';
+  }
+}
+
+// 标记消息为已读
+const markMessagesAsRead = () => {
+  if (!messages.value || !currentUser.value || !currentUser.value._id || !chatId.value) return;
+  
+  messages.value.forEach(msg => {
+    if (msg && msg.readBy && !msg.readBy.includes(currentUser.value._id)) {
+      markMessageAsRead(chatId.value, msg._id);
+    }
+  });
+}
+
+// 处理触摸移动
+const handleTouchMove = (e) => {
+  if (!showRecordingTip.value) return
+  
+  const touch = e.touches[0]
+  const startY = e.target.offsetTop
+  const moveY = touch.clientY
+  
+  // 如果上滑超过50px，显示"松开手指，取消发送"
+  if (startY - moveY > 50) {
+    recordingTipText.value = '松开手指，取消发送'
+  } else {
+    recordingTipText.value = '松开结束'
+  }
+}
 </script>
 
 <style scoped>
@@ -983,13 +1009,10 @@ const handleScroll = (e) => {
   display: flex;
   align-items: flex-start;
   max-width: 70%;
+  margin-bottom: 16rpx;
 }
 
 .message-bubble.self-message {
-  flex-direction: row-reverse;
-}
-
-.message-mine .message-bubble {
   flex-direction: row-reverse;
   margin-left: auto;
 }
@@ -1000,6 +1023,7 @@ const handleScroll = (e) => {
   border-radius: 8rpx;
   background-color: #f0f0f0;
   margin: 0 16rpx;
+  flex-shrink: 0;
 }
 
 .message-content {
@@ -1008,14 +1032,11 @@ const handleScroll = (e) => {
   max-width: calc(100% - 104rpx);
 }
 
-.message-mine .message-content {
-  align-items: flex-end;
-}
-
 .sender-name {
   font-size: 24rpx;
   color: #999;
   margin-bottom: 6rpx;
+  padding-left: 4rpx;
 }
 
 .message-text {
@@ -1112,10 +1133,21 @@ const handleScroll = (e) => {
   margin-top: 6rpx;
   font-size: 22rpx;
   color: #999;
+  justify-content: flex-end;
 }
 
 .read-status {
   margin-left: 12rpx;
+  font-size: 20rpx;
+}
+
+.message-mine .message-status {
+  justify-content: flex-end;
+}
+
+.message-mine .sender-name {
+  text-align: right;
+  padding-right: 4rpx;
 }
 
 .input-area {
@@ -1231,34 +1263,39 @@ const handleScroll = (e) => {
 
 .recording-tip {
   background-color: rgba(0, 0, 0, 0.7);
-  border-radius: 20rpx;
-  padding: 40rpx;
+  border-radius: 12rpx;
+  padding: 30rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
+  min-height: 200rpx;
+  width: 200rpx;
+  justify-content: center;
 }
 
 .recording-icon {
-  width: 120rpx;
-  height: 120rpx;
+  width: 80rpx;
+  height: 80rpx;
   background-color: #ff4d4f;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20rpx;
+  margin-bottom: 16rpx;
+  box-shadow: 0 0 12rpx rgba(255, 77, 79, 0.3);
 }
 
 .recording-text {
   color: #ffffff;
-  font-size: 28rpx;
+  font-size: 24rpx;
+  font-weight: 500;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.2);
 }
 
 .audio-message {
   display: flex;
   align-items: center;
   min-width: 120rpx;
-  padding: 16rpx 20rpx;
   background-color: #ffffff;
   border-radius: 8rpx;
   cursor: pointer;

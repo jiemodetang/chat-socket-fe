@@ -168,7 +168,7 @@ onMounted(async () => {
   }
   
   // await fetchFriends()
-  pendingRequests.value = store.state.friendRequests.length
+  // pendingRequests.value = store.state.friendRequests.length
 })
 onShow(async () => {
   await fetchFriends()
@@ -195,7 +195,7 @@ const onRefresh = async () => {
   isRefreshing.value = true
   try {
     await fetchFriends()
-    pendingRequests.value = store.state.friendRequests.length
+    // pendingRequests.value = store.state.friendRequests.length
   } finally {
     isRefreshing.value = false
   }

@@ -122,9 +122,6 @@ onShow(async () => {
       return
     }
     
-    // 连接Socket
-    await store.dispatch('connectSocket')
-    
     // 获取聊天列表
     await fetchChats()
   } catch (error) {
@@ -144,12 +141,14 @@ const fetchChats = async () => {
     if (!result.success) {
       throw new Error('获取聊天列表失败')
     }
+    return { success: true }
   } catch (error) {
     console.error('Failed to fetch chats:', error)
     uni.showToast({
       title: '获取聊天列表失败',
       icon: 'none'
     })
+    return { success: false }
   } finally {
     isLoading.value = false
   }
@@ -159,7 +158,24 @@ const fetchChats = async () => {
 const onRefresh = async () => {
   isRefreshing.value = true
   try {
-    await fetchChats()
+    // 重新获取聊天列表
+    const result = await store.dispatch('fetchChats')
+    if (!result.success) {
+      throw new Error('刷新聊天列表失败')
+    }
+    
+    // 显示刷新成功提示
+    uni.showToast({
+      title: '刷新成功',
+      icon: 'success',
+      duration: 1500
+    })
+  } catch (error) {
+    console.error('Failed to refresh chats:', error)
+    uni.showToast({
+      title: '刷新失败',
+      icon: 'none'
+    })
   } finally {
     isRefreshing.value = false
   }
@@ -208,9 +224,18 @@ const getChatName = (chat) => {
     return chat.chatName || '群聊'
   } else {
     // 在单聊中，显示对方的名称
+    console.log(
+      store.getters.currentUser
+    );
+    
     const currentUserEmail = store.getters.currentUser?.email
-    const otherUser = chat.users.find(u => u.email !== currentUserEmail)
-    return otherUser ? otherUser.username : '未知用户'
+    // 确保找到的是对方用户，并且确保chat.users存在
+    const otherUser = chat.users && chat.users.length > 0 
+      ? chat.users.find(u => u.email !== currentUserEmail)
+      : null
+    
+    // 优先使用对方的昵称，如果没有则使用用户名
+    return otherUser?.username || '未知用户'
   }
 }
 
@@ -227,12 +252,24 @@ const getChatAvatar = (chat) => {
 
 // 获取最后一条消息内容
 const getLastMessage = (chat) => {
-  
   // 优先使用lastMessage（来自socket通知），其次使用latestMessage（来自API）
   const lastMsg = chat.lastMessage || chat.latestMessage
 
   if (!lastMsg) return '暂无消息'
-  return lastMsg.content || '新消息'
+
+  // 根据消息类型返回不同的显示内容
+  switch (lastMsg.messageType) {
+    case 'text':
+      return lastMsg.content || '新消息'
+    case 'image':
+      return '[图片]'
+    case 'audio':
+      return '[语音]'
+    case 'file':
+      return `[文件] ${lastMsg.content || '未知文件'}`
+    default:
+      return '新消息'
+  }
 }
 
 // 格式化时间

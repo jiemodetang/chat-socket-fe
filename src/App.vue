@@ -1,16 +1,28 @@
 <script setup>
 import { useStore } from 'vuex'
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
+import { mapState, mapActions } from 'vuex'
 
 const store = useStore()
 
-onLaunch(() => {
+onLaunch(async () => {
   console.log('App Launch')
-  console.log(store.getters.isAuthenticated)
-
-  if (store.getters.isAuthenticated) {
-    store.dispatch('fetchCurrentUser')
-    store.dispatch('connectSocket')
+  // 检查是否有token，如果有则初始化WebSocket连接和获取用户信息
+  const token = uni.getStorageSync('token')
+  if (token) {
+    // 初始化WebSocket连接
+    store.dispatch('websocket/initWebSocket', token)
+    // 获取用户信息
+    try {
+      await store.dispatch('fetchCurrentUser')
+    } catch (error) {
+      console.error('Failed to fetch user info:', error)
+      // 如果获取用户信息失败，可能是token过期，清除token并跳转到登录页
+      uni.removeStorageSync('token')
+      uni.redirectTo({
+        url: '/pages/login/index'
+      })
+    }
   }
 })
 

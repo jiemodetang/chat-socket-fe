@@ -76,32 +76,13 @@ onMounted(async () => {
     })
     return
   }
-  
-  // 获取好友请求
-  await fetchFriendRequests()
 })
-
-// 获取好友请求
-const fetchFriendRequests = async () => {
-  isLoading.value = true
-  try {
-    await store.dispatch('fetchFriendRequests')
-  } catch (error) {
-    console.error('Failed to fetch friend requests:', error)
-    uni.showToast({
-      title: '获取好友请求失败',
-      icon: 'none'
-    })
-  } finally {
-    isLoading.value = false
-  }
-}
 
 // 下拉刷新
 const onRefresh = async () => {
   isRefreshing.value = true
   try {
-    await fetchFriendRequests()
+    // 这里可以添加其他刷新逻辑
   } finally {
     isRefreshing.value = false
   }
