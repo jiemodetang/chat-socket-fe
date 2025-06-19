@@ -1,3 +1,11 @@
+<template>
+  <view>
+    <view class="container">
+      <router-view></router-view>
+    </view>
+  </view>
+</template>
+
 <script setup>
 import { useStore } from 'vuex'
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
@@ -216,5 +224,10 @@ page {
 
 .border-right {
   border-right: 2rpx solid var(--border-color);
+}
+
+.container {
+  width: 100%;
+  min-height: 100vh;
 }
 </style>

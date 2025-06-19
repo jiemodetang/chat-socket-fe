@@ -1,5 +1,5 @@
 // 环境配置
-let env = 'development'
+let env = 'production'
 
 // 基础配置
 const baseConfig = {

@@ -1,4 +1,5 @@
 import websocketService from '@/utils/websocket';
+import { callManager } from '@/utils/call';
 
 const state = {
   isConnected: false,
@@ -89,9 +90,39 @@ const actions = {
     websocketService.on('message-read', ({ messageId, userId }) => {
       // 处理消息已读状态
     });
+
+    // 注册通话相关事件处理器，确保 callManager 能收到这些事件
+    websocketService.on('incoming-call', (data) => {
+      console.log('Store 收到来电事件:', data);
+      // callManager 会自动处理这个事件，因为它已经在 setupCallEventListeners 中注册了监听器
+    });
+
+    websocketService.on('call-accepted', (data) => {
+      console.log('Store 收到通话接受事件:', data);
+    });
+
+    websocketService.on('call-rejected', (data) => {
+      console.log('Store 收到通话拒绝事件:', data);
+    });
+
+    websocketService.on('call-ended', (data) => {
+      console.log('Store 收到通话结束事件:', data);
+    });
+
+    websocketService.on('ice-candidate', (data) => {
+      console.log('Store 收到ICE候选者事件:', data);
+    });
+
+    websocketService.on('offer', (data) => {
+      console.log('Store 收到Offer事件:', data);
+    });
+
+    websocketService.on('answer', (data) => {
+      console.log('Store 收到Answer事件:', data);
+    });
   },
 
-  sendMessage({ state }, { chatId, content, messageType, fileUrl, duration }) {
+  sendMessage({ state }, { chatId, content, messageType = 'text', fileUrl = '', duration = 0 }) {
     websocketService.sendChatMessage(chatId, content, messageType, fileUrl, duration);
   },
 
@@ -113,7 +144,9 @@ const actions = {
     commit('SET_CONNECTION_STATUS', false);
     commit('SET_CURRENT_USER', null);
     commit('SET_ONLINE_USERS', []);
-  }
+  },
+
+
 };
 
 const getters = {

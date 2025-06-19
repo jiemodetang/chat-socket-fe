@@ -1,5 +1,6 @@
 import { computed } from 'vue';
 import { useStore } from 'vuex';
+import { callManager } from '@/utils/call';
 
 export function useWebSocket() {
   const store = useStore();
@@ -19,6 +20,7 @@ export function useWebSocket() {
       duration
     });
   };
+
 
   // 发送正在输入状态
   const sendTypingStatus = (chatId) => {
@@ -46,6 +48,8 @@ export function useWebSocket() {
   const currentUser = computed(() => store.getters['websocket/currentUser']);
   const getTypingUsers = (chatId) => store.getters['websocket/getTypingUsers'](chatId);
   const getUnreadMessageCount = (chatId) => store.getters['websocket/getUnreadMessageCount'](chatId);
+
+
 
   return {
     // 方法

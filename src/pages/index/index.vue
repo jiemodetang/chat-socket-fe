@@ -79,18 +79,7 @@
       </view>
     </scroll-view>
     
-    <!-- 悬浮按钮 -->
-    <!-- <view class="float-btn-container">
-      <u-button
-        class="float-btn"
-        shape="circle"
-        color="linear-gradient(to right, #3c9cff, #5dabfb)"
-        icon="plus"
-        icon-color="#ffffff"
-        size="large"
-        @click="showActionSheet"
-      ></u-button>
-    </view> -->
+    <incoming-call-notification />
   </view>
 </template>
 

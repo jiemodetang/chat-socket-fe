@@ -1,3 +1,5 @@
+import { currentConfig } from '../config'
+
 class WebSocketService {
   constructor() {
     this.socketTask = null;
@@ -7,8 +9,10 @@ class WebSocketService {
     this.reconnectInterval = 3000;
     this.messageHandlers = new Map();
     this.token = '';
-    // 开发环境使用本地地址
-    this.baseUrl = 'ws://localhost:3000';
+    // 将 ws:// 或 wss:// 添加到 apiUrl
+    const wsProtocol = currentConfig.apiUrl.startsWith('https') ? 'wss://' : 'ws://'
+    const wsUrl = currentConfig.apiUrl.replace(/^https?:\/\//, '')
+    this.baseUrl = `${wsProtocol}${wsUrl}`;
     this.isConnecting = false;
     this.heartbeatInterval = null;
     this.heartbeatTimeout = 30000; // 30秒
@@ -219,7 +223,17 @@ class WebSocketService {
   // 处理接收到的消息
   handleMessage(message) {
     const { type, data } = message;
+    console.log('WebSocket 处理消息:', { type, data });
+    
+    // 特别关注通话相关消息
+    if (type === 'incoming-call' || type === 'call-accepted' || type === 'call-rejected' || 
+        type === 'call-ended' || type === 'ice-candidate' || type === 'offer' || type === 'answer') {
+      console.log('收到通话相关消息:', { type, data });
+    }
+    
     const handlers = this.messageHandlers.get(type) || [];
+    console.log(`消息类型 ${type} 的处理器数量:`, handlers.length);
+    
     handlers.forEach(handler => {
       try {
         handler(data);
@@ -273,6 +287,67 @@ class WebSocketService {
   // 标记消息为已读
   markMessageAsRead(messageId) {
     this.sendMessage('mark-read', { messageId });
+  }
+
+  // 发送通话请求
+  sendCallRequest(targetUserId, callType, roomId) {
+    this.sendMessage('call', {
+      targetUserId,
+      callType, // 'audio' 或 'video'
+      roomId
+    });
+  }
+
+  // 发送接受通话
+  sendCallAccepted(callerId, roomId) {
+    this.sendMessage('call-accepted', {
+      callerId,
+      roomId
+    });
+  }
+
+  // 发送拒绝通话
+  sendCallRejected(callerId, reason = '对方已拒绝') {
+    this.sendMessage('call-rejected', {
+      callerId,
+      reason
+    });
+  }
+
+  // 发送结束通话
+  sendCallEnded(targetUserId, roomId, reason = '通话已结束') {
+    this.sendMessage('call-ended', {
+      targetUserId,
+      roomId,
+      reason
+    });
+  }
+
+  // 发送ICE候选者
+  sendIceCandidate(targetUserId, candidate, roomId) {
+    this.sendMessage('ice-candidate', {
+      targetUserId,
+      candidate,
+      roomId
+    });
+  }
+
+  // 发送通话offer
+  sendCallOffer(targetUserId, offer, roomId) {
+    this.sendMessage('offer', {
+      targetUserId,
+      offer,
+      roomId
+    });
+  }
+
+  // 发送通话answer
+  sendCallAnswer(targetUserId, answer, roomId) {
+    this.sendMessage('answer', {
+      targetUserId,
+      answer,
+      roomId
+    });
   }
 
   // 关闭连接

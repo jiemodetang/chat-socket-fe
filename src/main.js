@@ -2,6 +2,7 @@ import { createSSRApp } from 'vue'
 import App from './App.vue'
 import store from './store'
 import uviewPlus from 'uview-plus'
+import IncomingCallNotification from '@/components/IncomingCallNotification.vue'
 
 
 export function createApp() {
@@ -12,6 +13,9 @@ export function createApp() {
   
   // 使用uView UI
   app.use(uviewPlus)
+  
+  // 全局注册 IncomingCallNotification 组件
+  app.component('IncomingCallNotification', IncomingCallNotification)
   
   return {
     app

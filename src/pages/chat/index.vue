@@ -1,6 +1,7 @@
 <template>
   <view class="chat-container" >
-
+    <CallScreen />
+   
 
     <!-- 聊天消息列表 -->
     <scroll-view 
@@ -11,84 +12,93 @@
       :scroll-with-animation="true"
       :enhanced="true"
       :show-scrollbar="false"
+      :bounces="false"
       @scroll="handleScroll"
     >
-    <!-- 
-        @scrolltolower="loadMoreMessages" 
-      refresher-enabled 
-    :refresher-triggered="isRefreshing"
-    @refresherrefresh="onRefresh" -->
-      <view v-if="isLoadingMore" class="loading-more">
-        <text>加载更多...</text>
-      </view>
+   
+      <view class="message-wrapper">
+        <view v-if="messages.length === 0" class="empty-state">
+          <text class="empty-text">暂无消息，开始聊天吧</text>
+        </view>
 
-      <view v-if="messages.length === 0 " class="empty-state">
-        <text class="empty-text">暂无消息，开始聊天吧</text>
-      </view>
+        <view v-else class="messages-container">
+          <template v-for="(message, index) in messages" :key="message._id">
+            <!-- 日期分割线 -->
+            <view v-if="showDateDivider(message, index)" class="date-divider">
+              <text>{{ formatDate(message.createdAt) }}</text>
+            </view>
 
-      <view v-else>
-        <view v-for="(message, index) in messages" :key="message._id" :id="`msg-${message._id}`" class="message-item"
-          :class="{ 'message-mine': isSelfMessage(message) }">
-          <!-- 日期分割线 -->
-          <view v-if="showDateDivider(message, index)" class="date-divider">
-            <text>{{ formatDate(message.createdAt) }}</text>
-          </view>
+            <!-- 消息项 -->
+            <view :id="`msg-${message._id}`" class="message-item" 
+              :class="{ 'message-mine': isSelfMessage(message), 'message-other': !isSelfMessage(message) }">
+              <!-- 消息内容 -->
+              <view class="message-bubble">
+                <!-- 头像 -->
+                <image class="avatar" :src="getSenderAvatar(message)" mode="aspectFill"></image>
 
-          <!-- 消息气泡 -->
-          <view class="message-bubble" :class="{ 'self-message': isSelfMessage(message) }">
-            <!-- 头像 -->
-            <image v-if="!isSelfMessage(message)" class="avatar"
-              :src="getSenderAvatar(message)" mode="aspectFill"></image>
+                <!-- 消息内容区域 -->
+                <view class="message-content">
+                  <!-- 发送者名称 -->
+                  <text v-if="isGroupChat && !isSelfMessage(message)" class="sender-name">
+                    {{ getSenderName(message) }}
+                  </text>
 
-            <!-- 消息内容 -->
-            <view class="message-content">
-              <!-- 发送者名称 -->
-              <text v-if="isGroupChat && !isSelfMessage(message)" class="sender-name">{{ getSenderName(message) }}</text>
+                  <view class="message-text" :class="{ 'self-message-text': isSelfMessage(message) }">
+                    <!-- 文本消息 -->
+                    <text v-if="message.messageType === 'text'" class="text-content">{{ message.content }}</text>
 
-              <!-- 消息内容区域 -->
-              <view class="message-text" :class="{ 'self-message-text': isSelfMessage(message) }">
-                <!-- 文本消息 -->
-                <text v-if="message.messageType === 'text'">{{ message.content }}</text>
+                    <!-- 通话记录 -->
+                    <view v-else-if="message.messageType === 'call'" class="call-record">
+                      <view class="call-record-content">
+                        <u-icon name="phone-fill" size="24" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                        <text>{{ message.content }}</text>
+                      </view>
+                    </view>
 
-                <!-- 图片消息 -->
-                <image v-else-if="message.messageType === 'image'" :src="message.fileUrl" mode="widthFix"
-                  class="message-image" @click="previewImage(message.fileUrl)"></image>
+                    <!-- 图片消息 -->
+                    <image v-else-if="message.messageType === 'image'" :src="message.fileUrl" 
+                      mode="widthFix" class="message-image" @click="previewImage(message.fileUrl)"
+                      @load="handleImageLoad"></image>
 
-                <!-- 音频消息 -->
-                <view v-else-if="message.messageType === 'audio'" class="audio-message" @click="playAudio(message)">
-                  <view class="audio-icon">
-                    <u-icon :name="isPlaying(message._id) ? 'pause' : 'play-right'" size="24" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                    <!-- 音频消息 -->
+                    <view v-else-if="message.messageType === 'audio'" class="audio-message" 
+                      @click="playAudio(message)">
+                      <view class="audio-icon">
+                        <u-icon :name="isPlaying(message._id) ? 'pause' : 'play-right'" size="24"
+                          :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                      </view>
+                      <view class="audio-wave" v-if="isPlaying(message._id)">
+                        <view class="wave-bar"></view>
+                        <view class="wave-bar"></view>
+                        <view class="wave-bar"></view>
+                      </view>
+                      <text class="audio-duration">{{ formatDuration(message.duration) }}″</text>
+                    </view>
+
+                    <!-- 文件消息 -->
+                    <view v-else-if="message.messageType === 'file'" class="file-message">
+                      <view class="file-icon">
+                        <u-icon name="file-text" size="24" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                      </view>
+                      <view class="file-info">
+                        <text class="file-name">{{ message.content }}</text>
+                        <text class="file-size">{{ formatFileSize(message.fileSize) }}</text>
+                      </view>
+                      <button class="download-btn" @click="downloadFile(message)">下载</button>
+                    </view>
                   </view>
-                  <view class="audio-wave" v-if="isPlaying(message._id)">
-                    <view class="wave-bar"></view>
-                    <view class="wave-bar"></view>
-                    <view class="wave-bar"></view>
+
+                  <!-- 消息状态 -->
+                  <view class="message-status">
+                    <text class="status-time">{{ formatTime(message.createdAt) }}</text>
+                    <text v-if="message.readBy && message.readBy.length > 0" class="read-status">
+                      {{ getReadStatus(message) }}
+                    </text>
                   </view>
-                  <text class="audio-duration">{{ formatDuration(message.duration) }}″</text>
                 </view>
-
-                <!-- 文件消息 -->
-                <view v-else-if="message.messageType === 'file'" class="file-message">
-                  <view class="file-icon">
-                    <text class="iconfont icon-file"></text>
-                  </view>
-                  <view class="file-info">
-                    <text class="file-name">{{ message.content }}</text>
-                    <text class="file-size">{{ formatFileSize(message.fileSize) }}</text>
-                  </view>
-                  <button class="download-btn" @click="downloadFile(message)">下载</button>
-                </view>
-              </view>
-
-              <!-- 消息状态 -->
-              <view class="message-status">
-                <text class="status-time">{{ formatTime(message.createdAt) }}</text>
-                <text v-if="message.readBy && message.readBy.length > 0" class="read-status">
-                  {{ getReadStatus(message) }}
-                </text>
               </view>
             </view>
-          </view>
+          </template>
         </view>
       </view>
     </scroll-view>
@@ -96,15 +106,8 @@
     <!-- 输入框区域 -->
     <view class="input-area">
       <view class="input-wrapper">
-        <!-- 录音按钮 -->
-        <view v-if="isRecorderSupported" 
-          class="voice-btn" 
-          @touchstart.prevent="startRecording" 
-          @touchend.prevent="stopRecording" 
-          @touchcancel.prevent="cancelRecording"
-          @touchmove.prevent="handleTouchMove">
-          <u-icon name="mic" size="24" color="#666"></u-icon>
-        </view>
+        <!-- 录音组件 -->
+        <VoiceRecorder :onAudioRecorded="handleAudioRecorded" />
 
         <textarea 
           class="message-input" 
@@ -132,18 +135,6 @@
       </view>
     </view>
 
-    <!-- 录音提示 -->
- 
-  </view>
-  <u-popup :show="showRecordingTip" mode="center" :closeable="false">
-      <view class="recording-tip">
-        <view class="recording-icon">
-          <u-icon name="mic" size="48" color="#fff"></u-icon>
-        </view>
-        <text class="recording-text">{{ recordingTipText }}</text>
-      </view>
-    </u-popup>
-
     <!-- 底部弹出菜单 -->
     <u-popup :show="showPopup" mode="bottom" @close="showPopup = false" :safe-area-inset-bottom="true">
       <view class="popup-content">
@@ -166,9 +157,18 @@
             </view>
             <text class="grid-item-text">文件</text>
           </view>
+          <view class="grid-item" @click="startVoiceCall">
+            <view class="grid-item-icon">
+              <u-icon name="phone-fill" size="32" color="#666"></u-icon>
+            </view>
+            <text class="grid-item-text">语音通话</text>
+          </view>
         </view>
       </view>
     </u-popup>
+
+
+  </view>
 </template>
 
 <script setup>
@@ -178,6 +178,12 @@ import { onLoad } from '@dcloudio/uni-app'
 import { currentConfig } from '../../config'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { uploadFile } from '@/utils/upload'
+import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
+import VoiceRecorder from '@/components/VoiceRecorder.vue'
+import AudioMessage from '@/components/AudioMessage.vue'
+import CallScreen from '@/components/CallScreen.vue'
+import IncomingCallNotification from '@/components/IncomingCallNotification.vue'
+import { callManager } from '@/utils/call'
 
 const store = useStore()
 const {
@@ -201,11 +207,6 @@ const scrollTop = ref(0)
 const scrollIntoView = ref('')
 const isKeyboardShow = ref(false)
 const showPopup = ref(false)
-const showRecordingTip = ref(false)
-const recordingTipText = ref('按住说话')
-const recorderManager = ref(null)
-const tempFilePath = ref('')
-const isRecorderSupported = ref(false)
 const isScrolledToBottom = ref(true)
 
 // 获取当前用户
@@ -255,7 +256,6 @@ const fetchMessages = async () => {
   if (!chatId.value) return
   
   try {
-    isLoadingMore.value = true
     const result = await store.dispatch('fetchMessages', chatId.value)
     if (!result.success) {
       throw new Error('获取消息失败')
@@ -274,49 +274,14 @@ const fetchMessages = async () => {
       })
     }
     
-    // 滚动到底部
-    nextTick(() => {
-      scrollToBottom()
-    })
+    // 滚动到底部，使用立即滚动
+    scrollToBottom(true)
   } catch (error) {
     console.error('Failed to fetch messages:', error)
     uni.showToast({
       title: '获取消息失败',
       icon: 'none'
     })
-  } finally {
-    isLoadingMore.value = false
-  }
-}
-
-// 加载更多消息
-const loadMoreMessages = async () => {
-  if (isLoadingMore.value) return
-  
-  try {
-    isLoadingMore.value = true
-    const result = await store.dispatch('loadMoreMessages', chatId.value)
-    if (!result.success) {
-      throw new Error('加载更多消息失败')
-    }
-  } catch (error) {
-    console.error('Failed to load more messages:', error)
-    uni.showToast({
-      title: '加载更多消息失败',
-      icon: 'none'
-    })
-  } finally {
-    isLoadingMore.value = false
-  }
-}
-
-// 下拉刷新
-const onRefresh = async () => {
-  isRefreshing.value = true
-  try {
-    await fetchMessages()
-  } finally {
-    isRefreshing.value = false
   }
 }
 
@@ -351,133 +316,20 @@ watch(() => store.state.currentChat, (newChatId) => {
   }
 })
 
-// 监听消息列表变化，自动滚动到底部
+// 监听消息列表变化
 watch(() => messages.value?.length, (newLength, oldLength) => {
-  if (newLength > oldLength) {
+  if (newLength > oldLength || !oldLength) {
     nextTick(() => {
-      scrollToBottom()
+     setTimeout(() => {
+      scrollToBottom(true)
+     }, 300);
     })
   }
 }, { immediate: true })
 
-// 检查是否支持录音功能
-const checkRecorderSupport = () => {
-  // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-  isRecorderSupported.value = true
-  // #endif
-  
-  // #ifdef H5
-  isRecorderSupported.value = false
-  // #endif
-}
-
-// 开始录音
-const startRecording = () => {
-  if (!isRecorderSupported.value) {
-    uni.showToast({
-      title: '当前平台不支持录音功能',
-      icon: 'none'
-    })
-    return
-  }
-
-  showRecordingTip.value = true
-  recordingTipText.value = '松开结束'
-
-  // 开始录音
-  recorderManager.value.start({
-    duration: 60000, // 最长录音时间，单位ms
-    sampleRate: 44100,
-    numberOfChannels: 1,
-    encodeBitRate: 192000,
-    format: 'mp3'
-  })
-}
-
-// 停止录音
-const stopRecording = () => {
-  if (!showRecordingTip.value) return
-  
-  showRecordingTip.value = false
-  recordingTipText.value = '按住说话'
-  
-  // 停止录音
-  recorderManager.value.stop()
-}
-
-// 取消录音
-const cancelRecording = () => {
-  if (!showRecordingTip.value) return
-  
-  showRecordingTip.value = false
-  recordingTipText.value = '按住说话'
-  
-  // 停止录音
-  recorderManager.value.stop()
-  
-  uni.showToast({
-    title: '已取消录音',
-    icon: 'none'
-  })
-}
-
-// 初始化录音管理器
-const initRecorderManager = () => {
-  if (!isRecorderSupported.value) {
-    console.log('当前平台不支持录音功能')
-    return
-  }
-
-  try {
-    // #ifdef APP-PLUS || MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-    recorderManager.value = uni.getRecorderManager()
-    
-    // 监听录音开始事件
-    recorderManager.value.onStart(() => {
-      console.log('录音开始')
-    })
-    
-    // 监听录音结束事件
-    recorderManager.value.onStop((res) => {
-      console.log('录音结束:', res)
-      if (res.duration < 1000) {
-        uni.showToast({
-          title: '录音时间太短',
-          icon: 'none'
-        })
-        return
-      }
-      
-      tempFilePath.value = res.tempFilePath
-      // 上传音频文件，并传入录音时长
-      uploadAudio(res.tempFilePath, res.duration)
-    })
-
-    // 监听录音错误事件
-    recorderManager.value.onError((res) => {
-      console.error('录音错误:', res)
-      uni.showToast({
-        title: '录音失败',
-        icon: 'none'
-      })
-      showRecordingTip.value = false
-    })
-
-    // 监听录音帧数据
-    recorderManager.value.onFrameRecorded((res) => {
-      const { frameBuffer, isLastFrame } = res
-      console.log('录音帧数据:', frameBuffer, isLastFrame)
-    })
-    // #endif
-  } catch (error) {
-    console.error('初始化录音管理器失败:', error)
-  }
-}
-
 // 页面加载完成
 onMounted(() => {
   // 检查是否已登录
-
   if (!store.getters.isAuthenticated || !store.getters.currentUser?._id) {
     uni.redirectTo({
       url: '/pages/login/index'
@@ -487,11 +339,6 @@ onMounted(() => {
   
   // 初始化WebSocket连接
   initWebSocket(store.state.token);
-  
-  // 检查录音支持
-  checkRecorderSupport();
-  // 初始化录音管理器
-  initRecorderManager();
   
   // 标记所有消息为已读
   if (chatId.value) {
@@ -530,26 +377,28 @@ const sendMessage = async () => {
   }
 }
 
-// 滚动到底部
-const scrollToBottom = () => {
+// 修改滚动到底部的逻辑
+const scrollToBottom = (immediate = false) => {
+  if (!messages.value || messages.value.length === 0) return
+
   nextTick(() => {
-    if (messages.value && messages.value.length > 0) {
-      const lastMessage = messages.value[messages.value.length - 1]
-      if (lastMessage && lastMessage._id) {
-        scrollIntoView.value = `msg-${lastMessage._id}`
-        // 使用一个较大的 scrollTop 值确保滚动到底部
+    const lastMessage = messages.value[messages.value.length - 1]
+    if (lastMessage && lastMessage._id) {
+      // 先设置滚动到指定消息
+      scrollIntoView.value = `msg-${lastMessage._id}`
+      
+      // 使用 nextTick 确保视图已更新
+      nextTick(() => {
+        // 设置一个较大的值确保滚动到底部
         scrollTop.value = 999999
-        // 添加多个延时，确保在不同情况下都能正确滚动
-        setTimeout(() => {
-          scrollTop.value = 999999
-        }, 100)
-        setTimeout(() => {
-          scrollTop.value = 999999
-        }, 300)
-        setTimeout(() => {
-          scrollTop.value = 999999
-        }, 500)
-      }
+        
+        // 如果是立即滚动，添加额外的延时确保滚动生效
+        if (immediate) {
+          setTimeout(() => {
+            scrollTop.value = 999999
+          }, 50)
+        }
+      })
     }
   })
 }
@@ -558,7 +407,7 @@ const scrollToBottom = () => {
 const handleInputFocus = () => {
   isKeyboardShow.value = true
   nextTick(() => {
-    scrollToBottom()
+    scrollToBottom(true)
   })
 }
 
@@ -617,45 +466,6 @@ const getSenderName = (message) => {
   return otherUser?.username || '未知用户'
 }
 
-// 格式化日期
-const formatDate = (timestamp) => {
-  if (!timestamp) return ''
-
-  const date = new Date(timestamp)
-  const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-
-  // 如果是今天
-  if (
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear()
-  ) {
-    return '今天'
-  }
-
-  // 如果是昨天
-  if (
-    date.getDate() === yesterday.getDate() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getFullYear() === yesterday.getFullYear()
-  ) {
-    return '昨天'
-  }
-
-  // 其他日期
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
-}
-
-// 格式化时间
-const formatTime = (timestamp) => {
-  if (!timestamp) return ''
-
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
 // 预览图片
 const previewImage = (url) => {
   uni.previewImage({
@@ -686,18 +496,6 @@ const downloadFile = async (message) => {
       icon: 'none'
     })
   }
-}
-
-// 格式化文件大小
-const formatFileSize = (size) => {
-  if (!size) return '未知大小'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let index = 0
-  while (size >= 1024 && index < units.length - 1) {
-    size /= 1024
-    index++
-  }
-  return `${size.toFixed(2)} ${units[index]}`
 }
 
 // 处理输入状态
@@ -774,8 +572,8 @@ const uploadImage = async (filePath) => {
   })
 }
 
-// 上传音频文件
-const uploadAudio = async (filePath, duration) => {
+// 处理录音完成
+const handleAudioRecorded = (filePath, duration) => {
   uploadFile({
     filePath,
     type: 'audio',
@@ -784,7 +582,7 @@ const uploadAudio = async (filePath, duration) => {
       // 拼接完整的音频URL并解码文件名
       const fullUrl = currentConfig.apiUrl + file.url
       const decodedFileName = decodeFileName(file.fileName)
-      // 发送音频消息，包含录音时长
+      // 发送音频消息，duration 已经是毫秒单位
       sendWebSocketMessage(chatId.value, decodedFileName || '语音消息', 'audio', fullUrl, duration)
     },
     onError: (error) => {
@@ -876,30 +674,11 @@ const playAudio = (message) => {
   }
 }
 
-// 格式化音频时长
-const formatDuration = (duration) => {
-  if (!duration) return '0'
-  return Math.ceil(duration / 1000)
-}
-
-// 在组件挂载时初始化音频上下文
-onMounted(() => {
-  initAudioContext()
-})
-
-// 在组件卸载时销毁音频上下文
-onUnmounted(() => {
-  if (audioContext.value) {
-    audioContext.value.destroy()
-  }
-})
-
 // 处理滚动事件
 const handleScroll = (e) => {
   const { scrollTop, scrollHeight, clientHeight } = e.detail
-  // 判断是否滚动到底部
-  isScrolledToBottom.value = scrollHeight - scrollTop - clientHeight < 50
-
+  // 判断是否滚动到底部（允许有10px的误差）
+  isScrolledToBottom.value = scrollHeight - scrollTop - clientHeight < 20
 }
 
 // 获取消息已读状态文本
@@ -928,46 +707,76 @@ const markMessagesAsRead = () => {
   });
 }
 
-// 处理触摸移动
-const handleTouchMove = (e) => {
-  if (!showRecordingTip.value) return
-  
-  const touch = e.touches[0]
-  const startY = e.target.offsetTop
-  const moveY = touch.clientY
-  
-  // 如果上滑超过50px，显示"松开手指，取消发送"
-  if (startY - moveY > 50) {
-    recordingTipText.value = '松开手指，取消发送'
-  } else {
-    recordingTipText.value = '松开结束'
+// 处理图片加载完成
+const handleImageLoad = () => {
+  if (isScrolledToBottom.value) {
+    scrollToBottom(true)
   }
 }
+
+// 发起语音通话
+const startVoiceCall = async () => {
+  try {
+    showPopup.value = false
+    const chat = store.state.chats.find(c => c._id === chatId.value)
+    if (!chat) {
+      throw new Error('找不到聊天信息')
+    }
+    
+    // 获取对方用户信息
+    const otherUser = chat.users.find(u => u._id !== currentUser.value._id)
+    if (!otherUser) {
+      throw new Error('找不到对方用户信息')
+    }
+    
+    // 发起通话
+    await callManager.makeCall(otherUser)
+  } catch (error) {
+    console.error('发起通话失败:', error)
+    uni.showToast({
+      title: error.message,
+      icon: 'none'
+    })
+  }
+}
+
+
 </script>
 
 <style scoped>
 .chat-container {
-  display: flex;
-  flex-direction: column;
-  background-color: #f5f7fa;
-  position: relative;
-  height: calc(100vh - 176rpx);
-  overflow: hidden;
+  flex: 1;
+  overflow-y: auto;
+  /* #ifdef APP-PLUS */
+  height: calc(100vh - 88rpx); /* APP端减去输入框高度 */
+  /* #endif */
+  
+  /* #ifndef APP-PLUS */
+  height: calc(100vh - 188rpx); /* 其他端减去输入框高度 */
+  /* #endif */
+  padding: 20rpx;
+  box-sizing: border-box;
 }
 
 .message-list {
   flex: 1;
-  padding: 20rpx 0;
-  background: #f5f7fa;
-  height:100%;
-  overflow-y: auto;
   position: relative;
+  height: 100%; /* 使用100%填充父容器 */
+}
+
+.message-wrapper {
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .empty-state {
+  flex: 1;
   display: flex;
   justify-content: center;
-  padding: 100rpx 0;
+  align-items: center;
+  padding: 40rpx 0;
 }
 
 .empty-text {
@@ -975,353 +784,174 @@ const handleTouchMove = (e) => {
   color: #999;
 }
 
-.loading-more {
-  text-align: center;
-  padding: 20rpx 0;
-  color: #999;
-  font-size: 24rpx;
+.messages-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.message-item {
+  margin: 20rpx 0;
+  padding: 0 24rpx;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .date-divider {
   display: flex;
   justify-content: center;
-  margin: 20rpx 0;
+  padding: 20rpx 0;
+  margin: 0;
 }
 
 .date-divider text {
   font-size: 24rpx;
   color: #999;
-  background-color: rgba(0, 0, 0, 0.05);
-  padding: 6rpx 16rpx;
+  background-color: rgba(0, 0, 0, 0.03);
+  padding: 8rpx 16rpx;
   border-radius: 8rpx;
-}
-
-.message-item {
-  margin-bottom: 20rpx;
-  padding: 0 20rpx;
-}
-
-.message-mine {
-  flex-direction: row-reverse;
 }
 
 .message-bubble {
   display: flex;
   align-items: flex-start;
+  gap: 12rpx;
   max-width: 70%;
-  margin-bottom: 16rpx;
+  width: fit-content;
 }
 
 .message-bubble.self-message {
-  flex-direction: row-reverse;
-  margin-left: auto;
+  flex-direction: row;
 }
 
 .avatar {
-  width: 72rpx;
-  height: 72rpx;
+  width: 80rpx;
+  height: 80rpx;
   border-radius: 8rpx;
   background-color: #f0f0f0;
-  margin: 0 16rpx;
   flex-shrink: 0;
 }
 
 .message-content {
   display: flex;
   flex-direction: column;
-  max-width: calc(100% - 104rpx);
+  min-width: 80rpx; /* 设置最小宽度 */
+  max-width: 100%; /* 允许内容自适应 */
 }
 
 .sender-name {
   font-size: 24rpx;
   color: #999;
-  margin-bottom: 6rpx;
-  padding-left: 4rpx;
+  margin-bottom: 4rpx;
+  margin-left: 16rpx;
 }
 
 .message-text {
   background-color: #ffffff;
-  padding: 16rpx 20rpx;
-  border-radius: 12rpx;
-  font-size: 28rpx;
+  padding: 16rpx 24rpx;
+  border-radius: 16rpx 4rpx 16rpx 16rpx;
+  font-size: 32rpx;
   color: #333;
-  word-break: break-all;
+  word-break: break-word;
   word-wrap: break-word;
-  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.05);
-  line-height: 1.4;
-}
-
-.message-mine .message-text {
-  background-color: var(--primary-color);
-  color: #ffffff;
-}
-
-.message-image {
-  max-width: 400rpx;
-  max-height: 400rpx;
-  min-width: 200rpx;
-  min-height: 200rpx;
-  border-radius: 8rpx;
-  width: auto;
-  height: auto;
-  display: block;
-  margin: 0;
-  padding: 0;
-  object-fit: contain;
-}
-
-.message-mine .message-text .message-image {
-  margin: 0;
-  padding: 0;
-  max-width: 400rpx;
-  max-height: 400rpx;
-  min-width: 200rpx;
-  min-height: 200rpx;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-}
-
-.file-message {
-  display: flex;
-  align-items: center;
-  background-color: #f8f8f8;
-  padding: 16rpx;
-  border-radius: 8rpx;
+  position: relative;
+  line-height: 44rpx;
+  margin-left: 16rpx;
+  width: fit-content;
   max-width: 100%;
 }
 
-.file-icon {
-  font-size: 40rpx;
-  margin-right: 16rpx;
-  flex-shrink: 0;
+.text-content {
+  display: inline-block;
+  white-space: pre-wrap;
+  min-width: 40rpx; /* 设置最小宽度 */
 }
 
-.file-info {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.file-name {
-  font-size: 26rpx;
-  color: #333;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.file-size {
-  font-size: 22rpx;
-  color: #999;
-  margin-top: 6rpx;
-}
-
-.download-btn {
-  font-size: 24rpx;
-  padding: 6rpx 16rpx;
-  background-color: var(--primary-color);
+.self-message-text {
+  background-color: #1989fa;
   color: #ffffff;
-  border-radius: 6rpx;
-  margin-left: 16rpx;
-  flex-shrink: 0;
+  border-radius: 4rpx 16rpx 16rpx 16rpx;
+  margin-right: 16rpx;
 }
 
 .message-status {
   display: flex;
   align-items: center;
-  margin-top: 6rpx;
-  font-size: 22rpx;
-  color: #999;
-  justify-content: flex-end;
-}
-
-.read-status {
-  margin-left: 12rpx;
-  font-size: 20rpx;
+  margin-top: 4rpx;
+  font-size: 24rpx;
+  color: #b2b2b2;
+  padding: 0 4rpx;
 }
 
 .message-mine .message-status {
   justify-content: flex-end;
+  margin-right: 16rpx;
+  margin-left: 0;
 }
 
-.message-mine .sender-name {
-  text-align: right;
-  padding-right: 4rpx;
+.message-other .message-status {
+  justify-content: flex-start;
+  margin-left: 16rpx;
+  margin-right: 0;
 }
 
-.input-area {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 8rpx 20rpx;
-  background-color: #ffffff;
-  border-top: 1rpx solid #e5e5e5;
-  z-index: 100;
-  box-shadow: 0 -2rpx 10rpx rgba(0, 0, 0, 0.05);
-  height: 88rpx;
-  box-sizing: border-box;
+.status-time {
+  font-size: 24rpx;
 }
 
-.input-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  height: 72rpx;
+.read-status {
+  margin-left: 8rpx;
+  font-size: 24rpx;
 }
 
-.message-input {
-  flex: 1;
+/* 图片消息样式 */
+.message-image {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  border-radius: 8rpx;
   background-color: #f5f5f5;
-  border-radius: 28rpx;
-  padding: 8rpx 20rpx;
-  font-size: 26rpx;
-  height: 52rpx;
-  line-height: 36rpx;
-  overflow-y: auto;
 }
 
-.send-btn {
-  width: 80rpx;
-  height: 52rpx;
-  background-color: #e0e0e0;
-  color: #ffffff;
-  border-radius: 26rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26rpx;
-  transition: all 0.3s ease;
-}
-
-.send-btn.active {
-  background-color: var(--primary-color);
-  transform: scale(1.05);
-}
-
-.plus-btn {
-  width: 60rpx;
-  height: 60rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-}
-
-.voice-btn {
-  width: 60rpx;
-  height: 60rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-}
-
-.popup-content {
-  padding: 30rpx;
-  background-color: #f8f8f8;
-  border-radius: 24rpx 24rpx 0 0;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 101;
-}
-
-.popup-grid {
-  display: flex;
-  flex-wrap: wrap;
-  padding: 20rpx 0;
-}
-
-.grid-item {
-  width: 25%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20rpx 0;
-}
-
-.grid-item-icon {
-  width: 100rpx;
-  height: 100rpx;
-  background-color: #ffffff;
-  border-radius: 20rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 10rpx;
-  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.05);
-}
-
-.grid-item-text {
-  font-size: 24rpx;
-  color: #666;
-  margin-top: 10rpx;
-}
-
-.recording-tip {
-  background-color: rgba(0, 0, 0, 0.7);
-  border-radius: 12rpx;
-  padding: 30rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-height: 200rpx;
-  width: 200rpx;
-  justify-content: center;
-}
-
-.recording-icon {
-  width: 80rpx;
-  height: 80rpx;
-  background-color: #ff4d4f;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 16rpx;
-  box-shadow: 0 0 12rpx rgba(255, 77, 79, 0.3);
-}
-
-.recording-text {
-  color: #ffffff;
-  font-size: 24rpx;
-  font-weight: 500;
-  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.2);
-}
-
+/* 音频消息样式 */
 .audio-message {
   display: flex;
   align-items: center;
   min-width: 120rpx;
-  background-color: #ffffff;
-  border-radius: 8rpx;
+  max-width: 300rpx;
+  width: fit-content;
   cursor: pointer;
+  border-radius: 8rpx;
 }
 
 .audio-icon {
+  margin-right: 12rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40rpx;
-  height: 40rpx;
-  margin-right: 12rpx;
 }
 
 .audio-wave {
   display: flex;
   align-items: center;
   gap: 4rpx;
-  margin-right: 12rpx;
+  margin: 0 12rpx;
 }
 
 .wave-bar {
   width: 4rpx;
-  height: 20rpx;
+  height: 16rpx;
   background-color: currentColor;
-  border-radius: 2rpx;
   animation: wave 1s infinite ease-in-out;
 }
 
@@ -1335,45 +965,281 @@ const handleTouchMove = (e) => {
 
 @keyframes wave {
   0%, 100% {
-    height: 20rpx;
+    height: 16rpx;
   }
   50% {
-    height: 10rpx;
+    height: 24rpx;
   }
 }
 
 .audio-duration {
-  font-size: 22rpx;
+  font-size: 24rpx;
+  color: currentColor;
+  margin-left: 8rpx;
+}
+
+/* 文件消息样式 */
+.file-message {
+  display: flex;
+  align-items: center;
+  padding: 20rpx;
+  background-color: #ffffff;
+  border-radius: 8rpx;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 200rpx;
+}
+
+.self-message .file-message {
+  background-color: #1989fa;
+  border-radius: 4rpx 16rpx 16rpx 16rpx;
+  margin-right: 16rpx;
+}
+
+.message-other .file-message {
+  background-color: #ffffff;
+  border-radius: 16rpx 4rpx 16rpx 16rpx;
+  margin-left: 16rpx;
+}
+
+.file-icon {
+  margin-right: 16rpx;
+}
+
+.file-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-name {
+  font-size: 28rpx;
+  color: #333;
+  margin-bottom: 4rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.download-btn {
+  font-size: 24rpx;
+  color: #ffffff;
+  background: none;
+  border: none;
+  padding: 0 16rpx;
+}
+
+.call-record-content {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.call-record-content text {
+  font-size: 28rpx;
   color: currentColor;
 }
 
+/* 输入区域样式调整 */
+.input-area {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0 24rpx;
+  background-color: #f7f7f7;
+  border-top: 1rpx solid #e5e5e5;
+  z-index: 100;
+  height: 100rpx; /* 44px */
+  display: flex;
+  align-items: center;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  width: 100%;
+  height: 68rpx; /* 34px */
+}
+
+.message-input {
+  flex: 1;
+  background-color: #ffffff;
+  border-radius: 8rpx;
+  padding: 8rpx 16rpx;
+  font-size: 28rpx;
+  height: 68rpx; /* 34px */
+  line-height: 40rpx;
+}
+
+.send-btn {
+  width: 100rpx;
+  height: 68rpx; /* 34px */
+  background-color: #07c160;
+  color: #ffffff;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+}
+
+.plus-btn {
+  width: 68rpx; /* 34px */
+  height: 68rpx; /* 34px */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #07c160;
+}
+
+/* 消息布局调整 */
+.message-mine {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+}
+
+.message-other {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  max-width: 70%;
+}
+
+.message-mine .message-bubble {
+  flex-direction: row-reverse;
+}
+
+.message-mine .message-content {
+  align-items: flex-end; /* 内容靠右对齐 */
+}
+
+.message-mine .message-text {
+  margin-right: 0; /* 移除右边距，靠近头像 */
+  margin-left: 16rpx;
+  border-radius: 16rpx 16rpx 4rpx 16rpx; /* 调整气泡尖角位置 */
+}
+
+.message-other .message-text {
+  margin-left: 0; /* 移除左边距，靠近头像 */
+  margin-right: 16rpx;
+  border-radius: 16rpx 16rpx 16rpx 4rpx; /* 调整气泡尖角位置 */
+}
+
+.message-mine .message-status {
+  justify-content: flex-end;
+  margin-right: 0;
+  padding-right: 4rpx;
+}
+
+.message-other .message-status {
+  justify-content: flex-start;
+  margin-left: 0;
+  padding-left: 4rpx;
+}
+
+.message-mine .sender-name {
+  text-align: right;
+  margin-right: 0;
+  padding-right: 4rpx;
+}
+
+.message-other .sender-name {
+  text-align: left;
+  margin-left: 0;
+  padding-left: 4rpx;
+}
+
+/* 特殊消息类型样式调整 */
+.message-mine .file-message {
+  margin-right: 0;
+  margin-left: 16rpx;
+  border-radius: 16rpx 16rpx 4rpx 16rpx;
+}
+
+.message-other .file-message {
+  margin-left: 0;
+  margin-right: 16rpx;
+  border-radius: 16rpx 16rpx 16rpx 4rpx;
+}
+
 .message-mine .audio-message {
-  background-color: var(--primary-color);
+  margin-right: 0;
+  margin-left: 16rpx;
+  border-radius: 16rpx 16rpx 4rpx 16rpx;
+}
+
+.message-other .audio-message {
+  margin-left: 0;
+  margin-right: 16rpx;
+  border-radius: 16rpx 16rpx 16rpx 4rpx;
+}
+
+/* 其他样式保持不变 */
+.self-message-text .text-content,
+.self-message-text .audio-duration,
+.self-message-text .file-name,
+.self-message-text .call-record-content text {
   color: #ffffff;
 }
 
-.new-message-notification {
-  position: fixed;
-  top: 20rpx;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(0, 0, 0, 0.7);
-  color: #fff;
-  padding: 16rpx 32rpx;
-  border-radius: 32rpx;
-  font-size: 28rpx;
-  z-index: 1000;
-  animation: slideDown 0.3s ease;
+.self-message .file-message {
+  background-color: #1989fa;
 }
 
-@keyframes slideDown {
-  from {
-    transform: translate(-50%, -100%);
-    opacity: 0;
-  }
-  to {
-    transform: translate(-50%, 0);
-    opacity: 1;
-  }
+.self-message .file-name,
+.self-message .file-size {
+  color: #ffffff;
+}
+
+.self-message .download-btn {
+  color: #ffffff;
+}
+
+.popup-content {
+  padding: 20rpx;
+}
+
+.popup-grid {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  width: 100%;
+}
+
+.grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20rpx;
+}
+
+.grid-item-icon {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 20rpx;
+  background-color: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10rpx;
+}
+
+.grid-item-text {
+  font-size: 24rpx;
+  color: #666;
 }
 </style>
