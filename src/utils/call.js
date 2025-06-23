@@ -1,6 +1,4 @@
 import { ref } from 'vue'
-import store from '@/store'
-import { currentConfig } from '@/config'
 import websocketService from './websocket'
 
 // 通话状态枚举
@@ -22,15 +20,14 @@ class CallManager {
     this.status = ref(CallStatus.IDLE)
     this.currentRoom = ref(null)
     this.remoteUser = ref(null)
-    this.localStream = ref(null)
-    this.remoteStream = ref(null)
-    this.peerConnection = null
+    this.localStream = ref(null) // 将由renderjs管理
+    this.remoteStream = ref(null) // 将由renderjs管理
     this.callTimer = ref(0)
     this.timerInterval = null
     
-    // 音频相关
-    this.recorderManager = null
-    this.innerAudioContext = null
+    // 音频控制状态
+    this.isMicrophoneMuted = ref(false)
+    this.isSpeakerOn = ref(true)
     
     // WebRTC配置
     this.configuration = {
@@ -39,464 +36,143 @@ class CallManager {
       ]
     }
 
-    // 初始化音频管理器
-    this.initAudioManagers()
-
-    // 注册所有通话相关事件处理
+    this.initWebRTC()
     this.setupCallEventListeners()
   }
 
-  // 初始化音频管理器
-  initAudioManagers() {
-    // #ifdef APP-PLUS
-    // APP环境初始化录音管理器
-    this.recorderManager = uni.getRecorderManager()
-    
-    this.recorderManager.onStart(() => {
-      console.log('录音开始')
-    })
-    
-    this.recorderManager.onStop((res) => {
-      console.log('录音结束', res)
-    })
-    
-    this.recorderManager.onError((res) => {
-      console.error('录音失败:', res)
-    })
+  // 初始化WebRTC模块
+  initWebRTC() {
+    // #if defined(APP_PLUS) || defined(H5)
+    uni.$emit('webrtc-init', this.configuration)
     // #endif
-    
-    // 初始化音频播放器
-    this.innerAudioContext = uni.createInnerAudioContext()
-    this.innerAudioContext.autoplay = true
-    
-    this.innerAudioContext.onError((res) => {
-      console.error('音频播放失败:', res)
-    })
   }
 
   // 设置所有通话事件监听
   setupCallEventListeners() {
-    // 监听来电
+    // 监听信令服务器事件
     websocketService.on('incoming-call', (data) => {
-      console.log('收到来电:', data)
-      this.receiveCall(data)
-    })
-
-    // 监听通话被接受
+      console.log('收到来电事件:', data);
+      this.receiveCall(data);
+    });
+    
     websocketService.on('call-accepted', (data) => {
-      console.log('通话被接受:', data)
-      this.handleCallAccepted(data)
-    })
-
-    // 监听通话被拒绝
+      console.log('收到接受通话事件:', data);
+      this.handleCallAccepted(data);
+    });
+    
     websocketService.on('call-rejected', (data) => {
-      console.log('通话被拒绝:', data)
-      this.handleCallRejected(data)
-    })
-
-    // 监听通话结束
+      console.log('收到拒绝通话事件:', data);
+      this.handleCallRejected(data);
+    });
+    
     websocketService.on('call-ended', (data) => {
-      console.log('通话结束:', data)
-      this.handleCallEnded(data)
-    })
-
-    // 监听ICE候选者
+      console.log('收到结束通话事件:', data);
+      this.handleCallEnded(data);
+    });
+    
+    // 处理WebRTC信令 - 从后端的响应中提取实际的数据
     websocketService.on('ice-candidate', (data) => {
-      console.log('收到ICE候选者:', data)
-      this.handleIceCandidate(data)
-    })
-
-    // 监听Offer
+      console.log('收到ICE候选者事件:', data);
+      if (data && data.candidate) {
+        this.handleIceCandidate(data.candidate);
+      } else {
+        console.error('收到无效的ICE候选者数据:', data);
+      }
+    });
+    
     websocketService.on('offer', (data) => {
-      console.log('收到Offer:', data)
-      this.handleOffer(data)
-    })
-
-    // 监听Answer
+      console.log('收到offer事件:', data);
+      if (data && data.offer) {
+        this.handleOffer(data.offer);
+      } else {
+        console.error('收到无效的offer数据:', data);
+      }
+    });
+    
     websocketService.on('answer', (data) => {
-      console.log('收到Answer:', data)
-      this.handleAnswer(data)
-    })
+      console.log('收到answer事件:', data);
+      if (data && data.answer) {
+        this.handleAnswer(data.answer);
+      } else {
+        console.error('收到无效的answer数据:', data);
+      }
+    });
+
+    // 监听来自renderjs的WebRTC事件
+    uni.$on('webrtc-offer-created', this.onOfferCreated.bind(this));
+    uni.$on('webrtc-answer-created', this.onAnswerCreated.bind(this));
+    uni.$on('webrtc-ice-candidate-created', this.onIceCandidateCreated.bind(this));
+    uni.$on('webrtc-remote-stream', (stream) => {
+      console.log('CallManager: 收到远程流', stream);
+      this.remoteStream.value = stream;
+    });
+    uni.$on('webrtc-connection-state-change', this.onConnectionStateChange.bind(this));
+    uni.$on('webrtc-error', (error) => {
+      console.error('CallManager: WebRTC模块发生错误:', error);
+      this.endCall(error);
+    });
   }
 
-  // 获取本地音频流
-  async getLocalStream() {
-    try {
-      console.log('开始获取本地音频流')
-      
-      // 检查录音权限
-      const auth = await this.checkRecordAuth()
-      if (!auth) {
-        throw new Error('未获得录音权限')
-      }
-
-      // #ifdef H5
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('您的浏览器不支持音频通话功能')
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        },
-        video: false
-      })
-      
-      this.localStream.value = stream
-      return stream
-      // #endif
-
-      // #ifdef APP-PLUS
-      return new Promise((resolve) => {
-        // 配置录音参数
-        const recorderConfig = {
-          duration: 600000,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          encodeBitRate: 96000,
-          format: 'aac',
-          frameSize: 50
-        }
-        
-        // 开始录音
-        this.recorderManager.start(recorderConfig)
-        
-        // 创建模拟音频流
-        const fakeStream = {
-          getTracks: () => [{
-            kind: 'audio',
-            enabled: true,
-            stop: () => {
-              this.recorderManager.stop()
-            }
-          }],
-          getAudioTracks: () => [{
-            kind: 'audio',
-            enabled: true,
-            stop: () => {
-              this.recorderManager.stop()
-            }
-          }]
-        }
-        
-        this.localStream.value = fakeStream
-        resolve(fakeStream)
-      })
-      // #endif
-      
-    } catch (error) {
-      console.error('获取本地音频流失败:', error)
-      throw error
-    }
-  }
-
-  // 检查录音权限
-  async checkRecordAuth() {
-    return new Promise(async (resolve) => {
-      // #ifdef H5
-      try {
-        // 检查浏览器是否支持 getUserMedia
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          uni.showToast({
-            title: '您的浏览器不支持音频通话',
-            icon: 'none'
-          })
-          resolve(false)
-          return
-        }
-
-        // 直接尝试获取媒体流，这会触发权限请求
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        })
-
-        // 如果成功获取流，立即停止所有轨道
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop())
-          resolve(true)
-        } else {
-          resolve(false)
-        }
-      } catch (error) {
-        console.error('获取录音权限失败:', error)
-        
-        // 如果是权限被拒绝
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-          uni.showModal({
-            title: '提示',
-            content: '需要麦克风权限才能进行语音通话，请在浏览器设置中允许使用麦克风',
-            confirmText: '我知道了',
-            showCancel: false
-          })
-        } else {
-          uni.showToast({
-            title: '获取麦克风失败',
-            icon: 'none'
-          })
-        }
-        resolve(false)
-      }
-      // #endif
-
-      // #ifdef APP-PLUS
+  // 权限检查
+  async checkPermissions() {
+    // #ifdef APP-PLUS
+    return new Promise(resolve => {
       if (uni.getSystemInfoSync().platform === 'android') {
         const permission = 'android.permission.RECORD_AUDIO'
-        plus.android.requestPermissions(
-          [permission],
-          function(resultObj) {
-            if (resultObj.granted.indexOf(permission) !== -1) {
-              resolve(true)
-            } else {
-              uni.showModal({
-                title: '提示',
-                content: '请允许使用麦克风',
-                success: (res) => {
-                  if (res.confirm) {
-                    // 打开应用设置界面让用户手动开启权限
-                    const Intent = plus.android.importClass('android.content.Intent')
-                    const Settings = plus.android.importClass('android.provider.Settings')
-                    const Uri = plus.android.importClass('android.net.Uri')
-                    const mainActivity = plus.android.runtimeMainActivity()
-                    const intent = new Intent()
-                    intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                    const uri = Uri.fromParts('package', mainActivity.getPackageName(), null)
-                    intent.setData(uri)
-                    mainActivity.startActivity(intent)
-                  }
-                  resolve(false)
-                }
-              })
-            }
-          },
-          function(error) {
-            console.error('请求权限失败', error)
+        plus.android.requestPermissions([permission], (result) => {
+          if (result.granted.includes(permission)) {
+            resolve(true)
+          } else {
+            uni.showModal({ title: '权限提醒', content: '需要麦克风权限才能进行语音通话，请在设置中开启。', showCancel: false })
             resolve(false)
           }
-        )
+        }, () => resolve(false))
       } else if (uni.getSystemInfoSync().platform === 'ios') {
-        // iOS权限请求
-        plus.ios.requestPermission('microphone', 
-          function(result) {
-            resolve(result === 'authorized')
-          },
-          function(error) {
-            console.error('请求权限失败', error)
+        plus.ios.requestPermission('microphone', (result) => {
+          if (result.authorized) {
+            resolve(true)
+          } else {
+            uni.showModal({ title: '权限提醒', content: '需要麦克风权限才能进行语音通话，请在设置中开启。', showCancel: false })
             resolve(false)
-          }
-        )
-      } else {
-        resolve(false)
-      }
-      // #endif
-
-      // #ifdef MP
-      uni.authorize({
-        scope: 'scope.record',
-        success: () => resolve(true),
-        fail: () => {
-          uni.showModal({
-            title: '提示',
-            content: '请允许使用麦克风',
-            success: (res) => {
-              if (res.confirm) {
-                uni.openSetting({
-                  success: (res) => {
-                    resolve(res.authSetting['scope.record'])
-                  }
-                })
-              } else {
-                resolve(false)
-              }
-            }
-          })
-        }
-      })
-      // #endif
-    })
-  }
-
-  // 处理远程流
-  handleRemoteStream(stream) {
-    console.log('处理远程音频流')
-    this.remoteStream.value = stream
-
-    // #ifdef H5
-    // H5环境直接使用MediaStream
-    // #endif
-
-    // #ifdef APP-PLUS
-    try {
-      // 创建音频播放器
-      const audioPlayer = plus.audio.createPlayer()
-      
-      // 获取远程流的音频轨道
-      const audioTrack = stream.getAudioTracks()[0]
-      if (!audioTrack) {
-        throw new Error('没有可用的音频轨道')
-      }
-
-      // 设置音频源并播放
-      audioPlayer.setSource(audioTrack)
-      audioPlayer.play({
-        success: () => {
-          console.log('远程音频开始播放')
-        },
-        fail: (error) => {
-          console.error('远程音频播放失败:', error)
-        }
-      })
-
-      // 保存音频播放器引用以便后续控制
-      this.remoteAudioPlayer = audioPlayer
-    } catch (error) {
-      console.error('处理远程音频流失败:', error)
-      uni.showToast({
-        title: '音频播放失败',
-        icon: 'none'
-      })
-    }
-    // #endif
-  }
-
-  // 初始化WebRTC连接
-  async initPeerConnection() {
-    try {
-      console.log('初始化WebRTC连接')
-      
-      // #ifdef H5
-      if (!window.RTCPeerConnection) {
-        throw new Error('当前设备不支持音视频通话')
-      }
-      this.peerConnection = new RTCPeerConnection(this.configuration)
-      // #endif
-      
-      // #ifdef APP-PLUS
-      if (!plus.webrtc) {
-        throw new Error('当前设备不支持音视频通话')
-      }
-
-      // 初始化 RTCPeerConnection
-      this.peerConnection = new plus.webrtc.RTCPeerConnection({
-        iceServers: this.configuration.iceServers
-      })
-
-      // 获取本地音频流
-      const audioStream = await new Promise((resolve, reject) => {
-        plus.audio.getRecorder().start({
-          format: "aac",
-          samplerate: 44100,
-          success: (stream) => {
-            resolve(stream)
-          },
-          fail: (error) => {
-            reject(new Error('获取音频流失败: ' + error.message))
           }
         })
-      })
-
-      // 创建音频轨道
-      const audioTrack = new plus.webrtc.MediaStreamTrack(audioStream, {
-        type: 'audio'
-      })
-
-      // 创建本地流并添加音频轨道
-      this.localStream.value = new plus.webrtc.MediaStream()
-      this.localStream.value.addTrack(audioTrack)
-
-      // 添加本地音频轨道到连接
-      this.peerConnection.addTrack(audioTrack, this.localStream.value)
-      // #endif
-
-      if (!this.peerConnection) {
-        throw new Error('初始化WebRTC连接失败')
+      } else {
+        resolve(true)
       }
-
-      // 监听ICE候选者
-      this.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          this.sendIceCandidate(event.candidate)
-        }
-      }
-
-      // 监听连接状态变化
-      this.peerConnection.onconnectionstatechange = () => {
-        console.log('WebRTC连接状态:', this.peerConnection.connectionState)
-        if (this.peerConnection.connectionState === 'disconnected') {
-          this.endCall('连接已断开')
-        }
-      }
-
-      // 监听ICE连接状态变化
-      this.peerConnection.oniceconnectionstatechange = () => {
-        console.log('ICE连接状态:', this.peerConnection.iceConnectionState)
-        if (this.peerConnection.iceConnectionState === 'disconnected') {
-          this.endCall('ICE连接已断开')
-        }
-      }
-
-      // 监听远程流
-      this.peerConnection.ontrack = (event) => {
-        console.log('收到远程音频轨道')
-        if (event.streams && event.streams[0]) {
-          this.handleRemoteStream(event.streams[0])
-        }
-      }
-
-      return this.peerConnection
-    } catch (error) {
-      console.error('初始化WebRTC连接失败:', error)
-      throw error
-    }
+    })
+    // #endif
+    // #ifndef APP-PLUS
+    // 在H5中，权限请求会在getUserMedia调用时自动触发，通常我们相信用户会授权
+    return true
+    // #endif
   }
-
+  
   // 发起呼叫
   async makeCall(targetUser) {
     try {
-      if (this.status.value !== CallStatus.IDLE) {
-        throw new Error('当前已有通话')
-      }
-      
-      await this.getLocalStream()
-      await this.initPeerConnection()
+      if (this.status.value !== CallStatus.IDLE) throw new Error('当前已有通话')
+      if (!await this.checkPermissions()) throw new Error('未获得麦克风权限')
       
       this.status.value = CallStatus.OUTGOING
       this.remoteUser.value = targetUser
       this.currentRoom.value = `call_${Date.now()}`
       
-      // 发送呼叫请求
-      websocketService.sendCallRequest(
-        targetUser._id,
-        'audio',
-        this.currentRoom.value
-      )
+      websocketService.sendCallRequest(targetUser._id, 'audio', this.currentRoom.value)
       
-      // 设置呼叫超时
-      setTimeout(() => {
-        if (this.status.value === CallStatus.OUTGOING) {
-          this.endCall('呼叫超时')
-        }
+      this.callTimeout = setTimeout(() => {
+        if (this.status.value === CallStatus.OUTGOING) this.endCall('呼叫超时')
       }, 30000)
       
     } catch (error) {
       console.error('发起呼叫失败:', error)
       this.endCall(error.message)
-      throw error
     }
   }
 
   // 接收呼叫
   async receiveCall(callData) {
     try {
-      console.log('收到呼叫:', callData)
-      
       if (this.status.value !== CallStatus.IDLE) {
-        console.log('当前状态不是空闲，拒绝呼叫')
         this.rejectCall(callData.caller._id, '正在通话中')
         return
       }
@@ -505,16 +181,11 @@ class CallManager {
       this.remoteUser.value = callData.caller
       this.currentRoom.value = callData.roomId
       
-      // 触发全局来电通知弹框
       this.showIncomingCallNotification(callData)
       
-      // 设置来电超时自动拒绝
       this.incomingCallTimeout = setTimeout(() => {
-        if (this.status.value === CallStatus.INCOMING) {
-          console.log('来电超时，自动拒绝')
-          this.rejectCall(callData.caller._id, '来电超时')
-        }
-      }, 30000) // 30秒超时
+        if (this.status.value === CallStatus.INCOMING) this.rejectCall(callData.caller._id, '来电超时')
+      }, 30000)
       
     } catch (error) {
       console.error('接收呼叫失败:', error)
@@ -525,26 +196,11 @@ class CallManager {
   // 显示来电通知弹框
   showIncomingCallNotification(callData) {
     try {
-      console.log('显示来电通知弹框:', callData)
-      
-      // 触发全局事件，显示 IncomingCallNotification 组件
       uni.$emit('incomingCall', {
         caller: callData.caller,
         roomId: callData.roomId,
         timestamp: Date.now()
       })
-      
-      // // 播放来电铃声（可选）
-      // this.playIncomingCallSound()
-      
-      // // 振动提醒（APP环境）
-      // // #ifdef APP-PLUS
-      // this.vibrateForIncomingCall()
-      // // #endif
-      
-      // // 显示系统通知（可选）
-      // this.showSystemNotification(callData.caller)
-      
     } catch (error) {
       console.error('显示来电通知失败:', error)
     }
@@ -662,32 +318,72 @@ class CallManager {
     }
   }
 
-  // 接受通话
+  // 接受通话 (被叫方操作)
   async acceptCall() {
     try {
-      await this.getLocalStream()
-      await this.initPeerConnection()
+      console.log('接受通话: 当前状态', this.status.value);
       
-      // 发送接受通话消息
+      if (this.status.value !== CallStatus.INCOMING) {
+        console.error('只能在来电状态下接受通话');
+        return;
+      }
+      
+      this.cleanupIncomingCall();
+      
+      // 先准备WebRTC连接，以便在发送接受消息后立即处理offer
+      // #if defined(APP_PLUS) || defined(H5)
+      uni.$emit('webrtc-prepare-for-call');
+      // #endif
+      
+      // 发送接受消息，通知主叫方可以开始WebRTC握手了
       websocketService.sendCallAccepted(
         this.remoteUser.value._id,
         this.currentRoom.value
-      )
+      );
       
-      this.status.value = CallStatus.CONNECTED
-      this.startTimer()
+      console.log('已发送call-accepted消息，等待offer');
       
+      // 设置offer超时检查，避免长时间卡在等待offer状态
+      this.offerTimeout = setTimeout(() => {
+        if (this.status.value === CallStatus.INCOMING) {
+          console.log('接受通话后等待offer超时，尝试重新发送接受消息');
+          // 重新发送接受消息，希望触发对方重新发送offer
+          websocketService.sendCallAccepted(
+            this.remoteUser.value._id,
+            this.currentRoom.value
+          );
+          
+          // 再次尝试5秒后
+          setTimeout(() => {
+            if (this.status.value === CallStatus.INCOMING) {
+              console.log('第二次尝试发送接受消息');
+              websocketService.sendCallAccepted(
+                this.remoteUser.value._id,
+                this.currentRoom.value
+              );
+              
+              // 如果15秒后仍未收到offer，结束通话
+              setTimeout(() => {
+                if (this.status.value === CallStatus.INCOMING) {
+                  this.endCall('未收到通话offer，连接超时');
+                }
+              }, 15000);
+            }
+          }, 5000);
+        }
+      }, 10000);
+      
+      // 注意：状态暂时保持为INCOMING，直到收到offer并创建answer后才变为CONNECTED
+      // 当接收到offer并创建answer后，onAnswerCreated会将状态设置为CONNECTED
     } catch (error) {
-      console.error('接受通话失败:', error)
-      this.endCall(error.message)
+      console.error('接受通话失败:', error);
+      this.endCall(error.message);
     }
   }
 
   // 拒绝通话
   rejectCall(callerId, reason = '对方已拒绝') {
-    // 清理来电相关资源
     this.cleanupIncomingCall()
-    
     websocketService.sendCallRejected(callerId, reason)
     this.resetCall()
   }
@@ -695,18 +391,11 @@ class CallManager {
   // 清理来电相关资源
   cleanupIncomingCall() {
     try {
-      // 停止来电铃声
-      this.stopIncomingCallSound()
-      
-      // 清除来电超时定时器
       if (this.incomingCallTimeout) {
         clearTimeout(this.incomingCallTimeout)
         this.incomingCallTimeout = null
       }
-      
-      // 隐藏来电通知弹框
       uni.$emit('hideIncomingCall')
-      
     } catch (error) {
       console.error('清理来电资源失败:', error)
     }
@@ -717,168 +406,321 @@ class CallManager {
     try {
       console.log('结束通话:', reason)
       
-      // 停止本地流
-      if (this.localStream.value) {
-        this.localStream.value.getTracks().forEach(track => {
-          track.stop()
-        })
-        this.localStream.value = null
-      }
-
-      // 停止远程流播放
-      // #ifdef APP-PLUS
-      if (this.remoteAudioPlayer) {
-        this.remoteAudioPlayer.stop()
-        this.remoteAudioPlayer = null
-      }
+      // #if defined(APP_PLUS) || defined(H5)
+      uni.$emit('webrtc-end-call')
       // #endif
 
-      // 关闭 WebRTC 连接
-      if (this.peerConnection) {
-        this.peerConnection.close()
-        this.peerConnection = null
-      }
-
-      // 重置状态
-      this.status.value = CallStatus.IDLE
-      this.remoteStream.value = null
-      this.currentRoom.value = null
-      this.remoteUser.value = null
-      this.stopTimer()
-
-      // 发送通话结束消息
-      if (this.currentRoom.value) {
-        websocketService.send('call-ended', {
-          roomId: this.currentRoom.value,
+      if (this.currentRoom.value && this.remoteUser.value) {
+        websocketService.sendCallEnded(
+          this.remoteUser.value._id,
+          this.currentRoom.value,
           reason
-        })
+        )
       }
+      
+      this.resetCall()
+
     } catch (error) {
       console.error('结束通话失败:', error)
     }
   }
 
-  // 处理对方接受通话
-  async handleCallAccepted(data) {
+  // 处理对方接受通话 (主叫方操作)
+  async handleCallAccepted(payload) {
     try {
-      if (this.status.value !== CallStatus.OUTGOING) return
+      console.log('收到通话接受消息:', payload);
+
+      // 规范化处理接收到的数据
+      const data = payload.data || payload;
+      const receivedRoomId = data.roomId;
+      const callee = data.callee; // 后端返回的接听者信息
       
-      // 创建并发送offer
-      const offer = await this.peerConnection.createOffer()
-      await this.peerConnection.setLocalDescription(offer)
+      console.log(`当前房间: ${this.currentRoom.value}, 收到的房间: ${receivedRoomId}, 当前状态: ${this.status.value}`);
+      console.log('接听者信息:', callee);
       
-      websocketService.sendCallOffer(
-        this.remoteUser.value._id,
-        offer,
-        this.currentRoom.value
-      )
+      // 无论处于什么状态，只要roomId匹配，都尝试发送offer
+      // 这样可以解决重复接收call-accepted消息的问题
+      if (!receivedRoomId || receivedRoomId !== this.currentRoom.value) {
+        console.warn('收到通话接受消息，但房间ID不匹配，忽略');
+        return;
+      }
+
+      // 如果不是呼出状态，记录警告但仍然处理
+      if (this.status.value !== CallStatus.OUTGOING) {
+        console.warn(`收到通话接受消息，但当前状态为 ${this.status.value}，仍尝试处理`);
+      }
       
-      this.status.value = CallStatus.CONNECTED
-      this.startTimer()
+      // 清除呼叫超时计时器
+      if (this.callTimeout) {
+        clearTimeout(this.callTimeout);
+        this.callTimeout = null;
+      }
+      
+      // 如果已经连接，则直接返回
+      if (this.status.value === CallStatus.CONNECTED) {
+        console.log('已经处于连接状态，忽略重复的接受消息');
+        return;
+      }
+      
+      console.log('通话已被接受，开始WebRTC握手');
+      
+      // 强制确保WebRTC初始化和offer发送
+      // 设置延迟发送offer的保障措施，确保发送
+      const makeCallAndCheckOffer = () => {
+        // 开始WebRTC通话流程，创建并发送Offer
+        console.log('准备创建并发送offer...');
+        
+        // #if defined(APP_PLUS) || defined(H5)
+        uni.$emit('webrtc-make-call');
+        // #endif
+        
+        // 设置检查点，确保offer被创建和发送
+        this.offerRetryTimeout = setTimeout(() => {
+          if (this.status.value !== CallStatus.CONNECTED) {
+            console.log('通话接受后3秒未建立连接，重新尝试发送offer');
+            // #if defined(APP_PLUS) || defined(H5)
+            uni.$emit('webrtc-make-call');
+            // #endif
+            
+            // 再次检查
+            this.offerRetryTimeout = setTimeout(() => {
+              if (this.status.value !== CallStatus.CONNECTED) {
+                console.log('第二次尝试后仍未连接，最后一次尝试');
+                // #if defined(APP_PLUS) || defined(H5)
+                uni.$emit('webrtc-make-call');
+                // #endif
+              }
+            }, 3000);
+          }
+        }, 3000);
+      };
+      
+      // 确保在不同设备/网络条件下都能正确触发offer创建
+      makeCallAndCheckOffer();
+      
+      // 注意：状态会在onOfferCreated中被设置为CONNECTED
       
     } catch (error) {
-      console.error('处理接受通话失败:', error)
-      this.endCall(error.message)
+      console.error('处理接受通话失败:', error);
+      this.endCall(error.message);
     }
   }
 
   // 处理通话被拒绝
   handleCallRejected(data) {
-    if (this.status.value !== CallStatus.OUTGOING) return
-    this.endCall(data.reason || '对方已拒绝通话')
+    console.log('收到通话拒绝消息:', data);
+    
+    if (this.status.value !== CallStatus.OUTGOING) {
+      console.warn('收到通话拒绝消息，但当前不是呼出状态，忽略');
+      return;
+    }
+    
+    this.endCall(data.reason || '对方已拒绝通话');
   }
 
   // 处理通话结束
   handleCallEnded(data) {
-    if (this.status.value === CallStatus.IDLE) return
-    this.endCall(data.reason || '对方已结束通话')
+    console.log('收到通话结束消息:', data);
+    
+    if (this.status.value === CallStatus.IDLE) {
+      console.warn('收到通话结束消息，但当前已是空闲状态，忽略');
+      return;
+    }
+    
+    // 验证房间ID是否匹配
+    if (data.roomId && data.roomId !== this.currentRoom.value) {
+      console.warn('收到通话结束消息，但房间ID不匹配，忽略');
+      return;
+    }
+    
+    this.endCall(data.reason || '对方已结束通话');
   }
 
-  // 处理ICE候选者
-  async handleIceCandidate(data) {
+  // 处理ICE候选者 (从信令服务器)
+  async handleIceCandidate(candidate) {
+    console.log('CallManager: 收到ICE候选者');
+    
     try {
-      if (!this.peerConnection) return
-      
-      // #ifdef H5
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
-      // #endif
-
-      // #ifdef APP-PLUS
-      await this.peerConnection.addIceCandidate({
-        candidate: data.candidate.candidate,
-        sdpMid: data.candidate.sdpMid,
-        sdpMLineIndex: data.candidate.sdpMLineIndex
-      })
+      // #if defined(APP_PLUS) || defined(H5)
+      uni.$emit('webrtc-handle-ice-candidate', candidate);
       // #endif
     } catch (error) {
-      console.error('处理ICE候选者失败:', error)
+      console.error('CallManager: 处理ICE候选者失败:', error);
     }
   }
 
-  // 处理Offer
-  async handleOffer(data) {
+  // 处理Offer (从信令服务器, 被叫方操作)
+  async handleOffer(offer) {
+    console.log('CallManager: 收到offer，处理中...');
+    
+    // 如果当前不是来电状态，忽略此offer
+    if (this.status.value !== CallStatus.INCOMING) {
+      console.warn(`CallManager: 收到offer但当前状态不是来电状态 (${this.status.value})，忽略`);
+      return;
+    }
+    
+    // 清除offer超时定时器
+    if (this.offerTimeout) {
+      clearTimeout(this.offerTimeout);
+      this.offerTimeout = null;
+    }
+    
     try {
-      console.log('处理收到的Offer')
-      if (!this.peerConnection) {
-        console.error('未初始化WebRTC连接')
-        return
+      // #if defined(APP_PLUS) || defined(H5)
+      uni.$emit('webrtc-handle-offer', offer);
+      // #endif
+    } catch (error) {
+      console.error('CallManager: 处理offer失败:', error);
+      this.endCall('处理通话offer失败');
+    }
+  }
+
+  // 处理Answer (从信令服务器, 主叫方操作)
+  async handleAnswer(answer) {
+    console.log('CallManager: 收到answer，处理中...');
+    
+    // 如果当前不是通话中或呼出状态，忽略此answer
+    if (this.status.value !== CallStatus.OUTGOING && this.status.value !== CallStatus.CONNECTED) {
+      console.warn(`CallManager: 收到answer但当前状态不合适 (${this.status.value})，忽略`);
+      return;
+    }
+    
+    try {
+      // #if defined(APP_PLUS) || defined(H5)
+      uni.$emit('webrtc-handle-answer', answer);
+      // #endif
+    } catch (error) {
+      console.error('CallManager: 处理answer失败:', error);
+      this.endCall('处理通话answer失败');
+    }
+  }
+
+  // 当renderjs创建Offer后 (主叫方操作)
+  onOfferCreated(offer) {
+    try {
+      console.log('CallManager: Offer created, sending...', offer);
+      
+      if (!offer) {
+        console.error('CallManager: 收到无效的offer');
+        return;
       }
       
-      // #ifdef H5
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer))
-      // #endif
+      if (!this.remoteUser.value || !this.remoteUser.value._id) {
+        console.error('CallManager: 无法发送offer，远程用户信息不存在');
+        return;
+      }
+      
+      if (!this.currentRoom.value) {
+        console.error('CallManager: 无法发送offer，房间ID不存在');
+        return;
+      }
+      
+      // 格式化offer确保它是可序列化的对象
+      let formattedOffer = offer;
+      if (offer instanceof RTCSessionDescription) {
+        formattedOffer = {
+          type: offer.type,
+          sdp: offer.sdp
+        };
+      } else if (typeof offer === 'string') {
+        try {
+          formattedOffer = JSON.parse(offer);
+        } catch (e) {
+          console.error('CallManager: offer格式化失败:', e);
+        }
+      }
+      
+      // 发送offer给对方
+      websocketService.sendCallOffer(
+        this.remoteUser.value._id,
+        formattedOffer,
+        this.currentRoom.value
+      );
+      
+      console.log('CallManager: Offer已发送，更新状态为已连接');
+      this.status.value = CallStatus.CONNECTED;
+      this.startTimer();
+      
+      // 确保清理任何尚未执行的重试定时器
+      if (this.offerRetryTimeout) {
+        clearTimeout(this.offerRetryTimeout);
+        this.offerRetryTimeout = null;
+      }
+    } catch (error) {
+      console.error('CallManager: 发送offer失败:', error);
+      this.endCall('发送offer失败');
+    }
+  }
 
-      // #ifdef APP-PLUS
-      await this.peerConnection.setRemoteDescription({
-        type: 'offer',
-        sdp: data.offer.sdp
-      })
-      // #endif
+  // 当renderjs创建Answer后 (被叫方操作)
+  onAnswerCreated(answer) {
+    try {
+      console.log('CallManager: Answer created, sending...', answer);
       
-      console.log('设置远程描述成功')
+      if (!answer) {
+        console.error('CallManager: 收到无效的answer');
+        return;
+      }
       
-      const answer = await this.peerConnection.createAnswer()
-      await this.peerConnection.setLocalDescription(answer)
-      console.log('创建并设置本地Answer成功')
+      if (!this.remoteUser.value || !this.remoteUser.value._id) {
+        console.error('CallManager: 无法发送answer，远程用户信息不存在');
+        return;
+      }
       
+      if (!this.currentRoom.value) {
+        console.error('CallManager: 无法发送answer，房间ID不存在');
+        return;
+      }
+      
+      // 格式化answer确保它是可序列化的对象
+      let formattedAnswer = answer;
+      if (answer instanceof RTCSessionDescription) {
+        formattedAnswer = {
+          type: answer.type,
+          sdp: answer.sdp
+        };
+      } else if (typeof answer === 'string') {
+        try {
+          formattedAnswer = JSON.parse(answer);
+        } catch (e) {
+          console.error('CallManager: answer格式化失败:', e);
+        }
+      }
+      
+      // 发送answer给对方
       websocketService.sendCallAnswer(
         this.remoteUser.value._id,
-        answer,
+        formattedAnswer,
         this.currentRoom.value
-      )
-    } catch (error) {
-      console.error('处理Offer失败:', error)
-      this.endCall(error.message)
-    }
-  }
-
-  // 处理Answer
-  async handleAnswer(data) {
-    try {
-      console.log('处理收到的Answer')
-      if (!this.peerConnection) {
-        console.error('未初始化WebRTC连接')
-        return
+      );
+      
+      console.log('CallManager: Answer已发送，更新状态为已连接');
+      this.status.value = CallStatus.CONNECTED;
+      this.startTimer();
+      
+      // 清除offer超时定时器
+      if (this.offerTimeout) {
+        clearTimeout(this.offerTimeout);
+        this.offerTimeout = null;
       }
-      
-      // #ifdef H5
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer))
-      // #endif
-
-      // #ifdef APP-PLUS
-      await this.peerConnection.setRemoteDescription({
-        type: 'answer',
-        sdp: data.answer.sdp
-      })
-      // #endif
-      
-      console.log('设置远程Answer成功')
     } catch (error) {
-      console.error('处理Answer失败:', error)
-      this.endCall(error.message)
+      console.error('CallManager: 发送answer失败:', error);
+      this.endCall('发送answer失败');
     }
   }
 
+  // 当renderjs创建ICE Candidate后
+  onIceCandidateCreated(candidate) {
+    this.sendIceCandidate(candidate)
+  }
+
+  // 当WebRTC连接状态改变
+  onConnectionStateChange(state) {
+    if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+      this.endCall('连接已断开')
+    }
+  }
+  
   // 发送ICE候选者
   sendIceCandidate(candidate) {
     websocketService.sendIceCandidate(
@@ -904,146 +746,59 @@ class CallManager {
     }
   }
 
-  // 清理通话资源
-  cleanupCall() {
-    try {
-      // 停止来电铃声
-      this.stopIncomingCallSound()
-      
-      // 停止本地流
-      if (this.localStream.value) {
-        // #ifdef H5
-        this.localStream.value.getTracks().forEach(track => track.stop())
-        // #endif
-
-        // #ifdef APP-PLUS
-        if (this.recorderManager) {
-          this.recorderManager.stop()
-        }
-        // #endif
-      }
-      
-      // 停止远程流播放
-      if (this.innerAudioContext) {
-        this.innerAudioContext.stop()
-      }
-      
-      // #ifdef H5
-      // 移除音频元素
-      const audioElements = document.getElementsByTagName('audio')
-      Array.from(audioElements).forEach(audio => audio.remove())
-      // #endif
-      
-      // 关闭对等连接
-      if (this.peerConnection) {
-        this.peerConnection.close()
-        this.peerConnection = null
-      }
-      
-      // 重置状态
-      this.localStream.value = null
-      this.remoteStream.value = null
-      this.remoteUser.value = null
-      this.currentRoom.value = null
-      this.status.value = CallStatus.IDLE
-      this.callTimer.value = 0
-      
-      // 停止计时器
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval)
-        this.timerInterval = null
-      }
-      
-    } catch (error) {
-      console.error('清理通话资源失败:', error)
-    }
-  }
-
   // 重置通话状态
   resetCall() {
-    this.stopTimer()
-    this.cleanupCall()
+    this.stopTimer();
+    this.cleanupIncomingCall();
+    
+    // 清除所有超时计时器
+    if (this.callTimeout) {
+      clearTimeout(this.callTimeout);
+      this.callTimeout = null;
+    }
+    
+    if (this.offerTimeout) {
+      clearTimeout(this.offerTimeout);
+      this.offerTimeout = null;
+    }
+    
+    if (this.offerRetryTimeout) {
+      clearTimeout(this.offerRetryTimeout);
+      this.offerRetryTimeout = null;
+    }
+    
+    this.status.value = CallStatus.IDLE;
+    this.localStream.value = null;
+    this.remoteStream.value = null;
+    this.remoteUser.value = null;
+    this.currentRoom.value = null;
+    this.callTimer.value = 0;
+    this.isMicrophoneMuted.value = false;
+    this.isSpeakerOn.value = true;
   }
 
   // 切换麦克风
   async toggleMicrophone() {
-    try {
-      // #ifdef H5
-      if (this.localStream.value) {
-        const audioTrack = this.localStream.value.getAudioTracks()[0]
-        if (audioTrack) {
-          audioTrack.enabled = !audioTrack.enabled
-          return audioTrack.enabled
-        }
-      }
-      // #endif
-
-      // #ifdef APP-PLUS
-      if (this.localStream.value) {
-        const audioTrack = this.localStream.value.getAudioTracks()[0]
-        if (audioTrack) {
-          if (audioTrack.enabled) {
-            audioTrack.stop()
-            audioTrack.enabled = false
-          } else {
-            // 重新获取音频流
-            const newStream = await new Promise((resolve, reject) => {
-              plus.audio.getRecorder().start({
-                format: "aac",
-                samplerate: 44100,
-                success: (stream) => resolve(stream),
-                fail: (error) => reject(error)
-              })
-            })
-            
-            // 替换音频轨道
-            const newTrack = new plus.webrtc.MediaStreamTrack(newStream, {
-              type: 'audio'
-            })
-            audioTrack.replaceTrack(newTrack)
-            audioTrack.enabled = true
-          }
-          return audioTrack.enabled
-        }
-      }
-      // #endif
-
-      return false
-    } catch (error) {
-      console.error('切换麦克风失败:', error)
-      throw error
-    }
+    // #if defined(APP_PLUS) || defined(H5)
+    uni.$emit('webrtc-toggle-mic')
+    this.isMicrophoneMuted.value = !this.isMicrophoneMuted.value
+    return this.isMicrophoneMuted.value
+    // #endif
+    return false
   }
 
   // 切换扬声器
   async toggleSpeaker() {
-    try {
-      // #ifdef H5
-      const audioElements = document.getElementsByTagName('audio')
-      Array.from(audioElements).forEach(audio => {
-        audio.setSinkId(audio.sinkId === 'default' ? 'speaker' : 'default')
-      })
-      return true
-      // #endif
+    // #ifdef APP-PLUS
+    this.isSpeakerOn.value = !this.isSpeakerOn.value
+    plus.device.setSpeakerEnabled(this.isSpeakerOn.value)
+    return this.isSpeakerOn.value
+    // #endif
 
-      // #ifdef APP-PLUS
-      if (this.innerAudioContext) {
-        const isSpeakerOn = await new Promise((resolve) => {
-          plus.device.getSpearkerEnabled((enabled) => {
-            resolve(enabled)
-          })
-        })
-        
-        plus.device.setSpearkerEnabled(!isSpeakerOn)
-        return !isSpeakerOn
-      }
-      // #endif
-
-      return false
-    } catch (error) {
-      console.error('切换扬声器失败:', error)
-      return false
-    }
+    // #ifdef H5
+    console.warn('H5环境不支持以编程方式切换扬声器。')
+    return this.isSpeakerOn.value
+    // #endif
   }
 }
 

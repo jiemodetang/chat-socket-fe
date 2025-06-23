@@ -82,29 +82,30 @@ export default {
 
     // 处理接听
     const handleAccept = async () => {
-      visible.value = false
+      console.log('IncomingCallNotification: 用户点击接听按钮');
+      visible.value = false;
       
       // 从store中找到与来电者的聊天
       const chat = store.state.chats.find(chat => {
         if (!chat.isGroupChat) {
-          return chat.users.some(user => user._id === callerInfo.value._id)
+          return chat.users.some(user => user._id === callerInfo.value._id);
         }
-        return false
-      })
+        return false;
+      });
 
       if (!chat?._id) {
-        console.error('未找到对应的聊天会话')
+        console.error('未找到对应的聊天会话');
         uni.showToast({
           title: '未找到聊天会话',
           icon: 'none'
-        })
-        return
+        });
+        return;
       }
       
       // 发送通话记录消息
-      websocketService.sendChatMessage(chat._id, '语音通话', 'call')
+      websocketService.sendChatMessage(chat._id, '语音通话', 'call');
       
-      // 跳转到聊天页面
+      // 跳转到聊天页面并触发通话界面显示
       uni.navigateTo({
         url: `/pages/chat/index?id=${chat._id}`,
         success: () => {
@@ -114,13 +115,16 @@ export default {
             peer: callerInfo.value,
             isIncoming: true,
             autoAnswer: true // 标记这是自动接听
-          })
-          
+          });
         },
         fail: (error) => {
-          console.error('页面跳转失败:', error)
+          console.error('页面跳转失败:', error);
+          // 即使页面跳转失败，也尝试接受通话
+          callManager.acceptCall().catch(err => {
+            console.error('接听失败:', err);
+          });
         }
-      })
+      });
     }
 
     // 处理拒绝

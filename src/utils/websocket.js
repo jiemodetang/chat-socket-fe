@@ -222,25 +222,43 @@ class WebSocketService {
 
   // 处理接收到的消息
   handleMessage(message) {
-    const { type, data } = message;
-    console.log('WebSocket 处理消息:', { type, data });
-    
-    // 特别关注通话相关消息
-    if (type === 'incoming-call' || type === 'call-accepted' || type === 'call-rejected' || 
-        type === 'call-ended' || type === 'ice-candidate' || type === 'offer' || type === 'answer') {
-      console.log('收到通话相关消息:', { type, data });
-    }
-    
-    const handlers = this.messageHandlers.get(type) || [];
-    console.log(`消息类型 ${type} 的处理器数量:`, handlers.length);
-    
-    handlers.forEach(handler => {
-      try {
-        handler(data);
-      } catch (error) {
-        console.error(`处理消息类型 ${type} 时出错:`, error);
+    try {
+      const { type, data } = message;
+      
+      // 记录消息类型和数据，但不记录过于详细的数据
+      if (type === 'ping' || type === 'pong') {
+        // 心跳消息简化日志
+        console.log(`WebSocket 处理消息: ${type}`);
+      } else {
+        console.log('WebSocket 处理消息:', { type, data });
       }
-    });
+      
+      // 特别关注通话相关消息，记录更详细的日志
+      if (type === 'incoming-call' || type === 'call-accepted' || type === 'call-rejected' || 
+          type === 'call-ended' || type === 'ice-candidate' || type === 'offer' || type === 'answer' ||
+          type === 'audio-data' || type === 'audio-file') {
+        console.log('收到通话相关消息 [详细]:', JSON.stringify({ type, data }, null, 2));
+      }
+      
+      // 找到注册的消息处理器
+      const handlers = this.messageHandlers.get(type) || [];
+      console.log(`消息类型 ${type} 的处理器数量:`, handlers.length);
+      
+      if (handlers.length === 0 && type !== 'ping' && type !== 'pong') {
+        console.warn(`收到消息类型 ${type} 但没有注册处理器`);
+      }
+      
+      // 调用处理器
+      handlers.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error(`处理消息类型 ${type} 时出错:`, error);
+        }
+      });
+    } catch (error) {
+      console.error('处理WebSocket消息时出错:', error, '原始消息:', message);
+    }
   }
 
   // 注册消息处理器
@@ -291,6 +309,7 @@ class WebSocketService {
 
   // 发送通话请求
   sendCallRequest(targetUserId, callType, roomId) {
+    console.log('发送通话请求给用户:', targetUserId, '类型:', callType, '房间:', roomId);
     this.sendMessage('call', {
       targetUserId,
       callType, // 'audio' 或 'video'
@@ -300,6 +319,7 @@ class WebSocketService {
 
   // 发送接受通话
   sendCallAccepted(callerId, roomId) {
+    console.log('发送接受通话给用户:', callerId, '房间:', roomId);
     this.sendMessage('call-accepted', {
       callerId,
       roomId
@@ -308,6 +328,7 @@ class WebSocketService {
 
   // 发送拒绝通话
   sendCallRejected(callerId, reason = '对方已拒绝') {
+    console.log('发送拒绝通话给用户:', callerId, '原因:', reason);
     this.sendMessage('call-rejected', {
       callerId,
       reason
@@ -316,6 +337,7 @@ class WebSocketService {
 
   // 发送结束通话
   sendCallEnded(targetUserId, roomId, reason = '通话已结束') {
+    console.log('发送结束通话给用户:', targetUserId, '房间:', roomId, '原因:', reason);
     this.sendMessage('call-ended', {
       targetUserId,
       roomId,
@@ -325,6 +347,7 @@ class WebSocketService {
 
   // 发送ICE候选者
   sendIceCandidate(targetUserId, candidate, roomId) {
+    console.log('发送ICE候选者给用户:', targetUserId, '房间:', roomId);
     this.sendMessage('ice-candidate', {
       targetUserId,
       candidate,
@@ -334,6 +357,7 @@ class WebSocketService {
 
   // 发送通话offer
   sendCallOffer(targetUserId, offer, roomId) {
+    console.log('发送offer给用户:', targetUserId, '房间:', roomId);
     this.sendMessage('offer', {
       targetUserId,
       offer,
@@ -343,10 +367,32 @@ class WebSocketService {
 
   // 发送通话answer
   sendCallAnswer(targetUserId, answer, roomId) {
+    console.log('发送answer给用户:', targetUserId, '房间:', roomId);
     this.sendMessage('answer', {
       targetUserId,
       answer,
       roomId
+    });
+  }
+
+  // 发送音频数据（替代方案）
+  sendAudioData(targetUserId, audioData, roomId) {
+    this.sendMessage('audio-data', {
+      targetUserId,
+      audioData,
+      roomId,
+      timestamp: Date.now()
+    });
+  }
+
+  // 发送音频文件（替代方案）
+  sendAudioFile(targetUserId, audioData, roomId, format = 'aac') {
+    this.sendMessage('audio-file', {
+      targetUserId,
+      audioData,
+      roomId,
+      format,
+      timestamp: Date.now()
     });
   }
 

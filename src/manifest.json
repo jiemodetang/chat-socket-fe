@@ -1,9 +1,9 @@
 {
-    "naH587A42C6me" : "socket-chat-app",
+    "name" : "socket-chat-app",
     "appid" : "__UNI__C045C71",
     "description" : "Socket Chat Application",
-    "versionName" : "1.0.4",
-    "versionCode" : 101,
+    "versionName" : "1.0.7",
+    "versionCode" : 111,
     "transformPx" : false,
     "uniStatistics" : {
         "enable" : false
@@ -19,8 +19,12 @@
             "delay" : 0
         },
         "modules" : {
+            "WebRTC" : {},
             "Socket" : {},
-            "DC-RTC" : {}
+            "VideoPlayer" : {},
+            "Audio" : {},
+            "Recorder" : {},
+            "Webview-x5" : {}
         },
         "distribute" : {
             "android" : {
@@ -44,16 +48,51 @@
                     "<uses-permission android:name=\"android.permission.FLASHLIGHT\"/>",
                     "<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\"/>",
                     "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\"/>",
-                    "<uses-permission android:name=\"android.permission.WRITE_SETTINGS\"/>"
+                    "<uses-permission android:name=\"android.permission.WRITE_SETTINGS\"/>",
+                    "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>"
                 ]
             },
             "ios" : {
-                "dSYMs" : false
+                "dSYMs" : false,
+                "capabilities" : {
+                    "entitlements" : {
+                        "com.apple.developer.microphone" : true,
+                        "com.apple.developer.camera" : true
+                    }
+                },
+                "privacyDescription" : {
+                    "NSMicrophoneUsageDescription" : "需要访问麦克风进行音频通话和录音",
+                    "NSCameraUsageDescription" : "需要访问相机进行视频通话"
+                }
             },
             "sdkConfigs" : {
                 "rtc" : {
-                    "enable" : true
-                }
+                    "enable" : true,
+                    "webrtc" : {
+                        "enable" : true,
+                        "iceServers" : [
+                            {
+                                "url" : "stun:stun.l.google.com:19302"
+                            },
+                            {
+                                "url" : "stun:stun1.l.google.com:19302"
+                            }
+                        ]
+                    }
+                },
+                "speech" : {
+                    "ifly" : {
+                        "appid" : ""
+                    }
+                },
+                "ad" : {},
+                "audio" : {
+                    "mp3" : {
+                        "description" : "音频录制"
+                    }
+                },
+                "push" : {}
             },
             "icons" : {
                 "android" : {
@@ -131,5 +170,18 @@
         "usingComponents" : true
     },
     "vueVersion" : "3",
-    "name" : "socket.io"
+    "uni-app" : {
+        "scripts" : {
+            "h5-weixin" : {
+                "title" : "微信服务号",
+                "BROWSER" : "Chrome",
+                "env" : {
+                    "UNI_PLATFORM" : "h5"
+                },
+                "define" : {
+                    "H5-WEIXIN" : true
+                }
+            }
+        }
+    }
 }

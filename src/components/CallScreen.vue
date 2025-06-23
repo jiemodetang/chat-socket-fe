@@ -142,15 +142,26 @@ export default {
       
       // 如果是自动接听的来电
       if (data.isIncoming && data.autoAnswer) {
-        console.log('自动接听来电')
-        try {
-          await callManager.acceptCall()
-        } catch (error) {
-          console.error('自动接听失败:', error)
-          uni.showToast({
-            title: '自动接听失败',
-            icon: 'none'
-          })
+        console.log('准备自动接听来电')
+        // 确保来电通知已隐藏
+        uni.$emit('hideIncomingCall')
+        
+        // 确保状态是正确的
+        if (callManager.status.value === CallStatus.INCOMING) {
+          try {
+            console.log('开始执行自动接听流程')
+            await callManager.acceptCall()
+            console.log('自动接听流程执行完毕')
+          } catch (error) {
+            console.error('自动接听失败:', error)
+            uni.showToast({
+              title: '自动接听失败',
+              icon: 'none',
+              duration: 3000
+            })
+          }
+        } else {
+          console.warn(`无法自动接听：当前状态 ${callManager.status.value} 不是来电状态`)
         }
       }
     }

@@ -111,6 +111,14 @@ onShow(async () => {
       return
     }
     
+    // 检查plus对象是否存在，以及webrtc是否可用
+    if (typeof plus !== 'undefined') {
+      console.log('plus对象存在:', plus);
+      console.log('plus.webrtc:', plus.webrtc);
+    } else {
+      console.log('plus对象不存在，可能需要等待native.js加载完成');
+    }
+    
     // 获取聊天列表
     await fetchChats()
   } catch (error) {
