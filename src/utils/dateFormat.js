@@ -6,34 +6,44 @@
 export const formatDate = (timestamp) => {
   if (!timestamp) return ''
 
-  const date = new Date(timestamp)
-  const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
+  try {
+    const date = new Date(timestamp)
+    const now = new Date()
+    const yesterday = new Date(now)
+    yesterday.setDate(now.getDate() - 1)
 
-  // 转换为本地时间
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    // 如果是今天
+    if (
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear()
+    ) {
+      // 今天只显示时间
+      return formatTime(timestamp)
+    }
 
-  // 如果是今天
-  if (
-    localDate.getDate() === now.getDate() &&
-    localDate.getMonth() === now.getMonth() &&
-    localDate.getFullYear() === now.getFullYear()
-  ) {
-    return '今天'
+    // 如果是昨天
+    if (
+      date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear()
+    ) {
+      return '昨天'
+    }
+    
+    // 如果是本周的消息
+    const weekDays = ['日', '一', '二', '三', '四', '五', '六']
+    const dayDiff = Math.floor((now - date) / (24 * 60 * 60 * 1000))
+    if (dayDiff < 7) {
+      return `周${weekDays[date.getDay()]}`
+    }
+
+    // 其他日期
+    return `${date.getMonth() + 1}月${date.getDate()}日`
+  } catch (error) {
+    console.error('Error formatting date:', error)
+    return ''
   }
-
-  // 如果是昨天
-  if (
-    localDate.getDate() === yesterday.getDate() &&
-    localDate.getMonth() === yesterday.getMonth() &&
-    localDate.getFullYear() === yesterday.getFullYear()
-  ) {
-    return '昨天'
-  }
-
-  // 其他日期
-  return `${localDate.getFullYear()}年${localDate.getMonth() + 1}月${localDate.getDate()}日`
 }
 
 /**
@@ -44,14 +54,16 @@ export const formatDate = (timestamp) => {
 export const formatTime = (timestamp) => {
   if (!timestamp) return ''
 
-  const date = new Date(timestamp)
-  // 转换为本地时间
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  
-  const hours = localDate.getHours().toString().padStart(2, '0')
-  const minutes = localDate.getMinutes().toString().padStart(2, '0')
-  
-  return `${hours}:${minutes}`
+  try {
+    const date = new Date(timestamp)
+    const hours = date.getHours().toString().padStart(2, '0')
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    
+    return `${hours}:${minutes}`
+  } catch (error) {
+    console.error('Error formatting time:', error)
+    return ''
+  }
 }
 
 /**

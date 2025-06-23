@@ -60,7 +60,7 @@
           <view class="chat-info">
             <view class="chat-header">
               <text class="chat-name text-ellipsis">{{ getChatName(chat) }}</text>
-              <text class="chat-time">{{ formatTime(chat.latestMessage?.createdAt) }}</text>
+              <text class="chat-time">{{ formatChatTime(chat.latestMessage?.createdAt) }}</text>
             </view>
             
             <view class="chat-content">
@@ -87,6 +87,7 @@
 import { onShow } from '@dcloudio/uni-app'
 import { ref, computed, onMounted} from 'vue'
 import { useStore } from 'vuex'
+import { formatTime, formatDate } from '@/utils/dateFormat'
 
 const store = useStore()
 const searchText = ref('')
@@ -256,51 +257,24 @@ const getLastMessage = (chat) => {
       return '[语音]'
     case 'file':
       return `[文件] ${lastMsg.content || '未知文件'}`
+    case 'call':
+      if (lastMsg.content.includes('视频')) {
+        return '[视频通话]'
+      } else if (lastMsg.content.includes('语音')) {
+        return '[语音通话]'
+      } else if (lastMsg.content.includes('通话时长')) {
+        return '[通话记录]'
+      } else if (lastMsg.content.includes('已拒绝')) {
+        return '[通话已拒绝]'
+      } else if (lastMsg.content.includes('无人接听')) {
+        return '[通话未接听]'
+      } else if (lastMsg.content.includes('已取消')) {
+        return '[通话已取消]'
+      } else {
+        return '[通话]'
+      }
     default:
       return '新消息'
-  }
-}
-
-// 格式化时间
-const formatTime = (timestamp) => {
-  if (!timestamp) return ''
-  
-  try {
-    const now = new Date()
-    const messageDate = new Date(timestamp)
-    
-    // 如果是今天的消息，只显示时间
-    if (
-      messageDate.getDate() === now.getDate() &&
-      messageDate.getMonth() === now.getMonth() &&
-      messageDate.getFullYear() === now.getFullYear()
-    ) {
-      return messageDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    }
-    
-    // 如果是昨天的消息
-    const yesterday = new Date(now)
-    yesterday.setDate(now.getDate() - 1)
-    if (
-      messageDate.getDate() === yesterday.getDate() &&
-      messageDate.getMonth() === yesterday.getMonth() &&
-      messageDate.getFullYear() === yesterday.getFullYear()
-    ) {
-      return '昨天'
-    }
-    
-    // 如果是本周的消息
-    const weekDays = ['日', '一', '二', '三', '四', '五', '六']
-    const dayDiff = Math.floor((now - messageDate) / (24 * 60 * 60 * 1000))
-    if (dayDiff < 7) {
-      return `周${weekDays[messageDate.getDay()]}`
-    }
-    
-    // 其他情况显示日期
-    return `${messageDate.getMonth() + 1}月${messageDate.getDate()}日`
-  } catch (error) {
-    console.error('Error formatting time:', error)
-    return ''
   }
 }
 
@@ -349,6 +323,11 @@ const getChatUserStatus = (chat) => {
   const currentUserEmail = store.getters.currentUser?.email
   const otherUser = chat.users.find(u => u.email !== currentUserEmail)
   return otherUser?.status || 'offline'
+}
+
+// 格式化聊天时间
+const formatChatTime = (timestamp) => {
+  return formatDate(timestamp)
 }
 </script>
 

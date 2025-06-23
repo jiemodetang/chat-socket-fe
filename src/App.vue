@@ -10,7 +10,7 @@
 import { useStore } from 'vuex'
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
 import { mapState, mapActions } from 'vuex'
-
+import { loginTUICallKit } from '@/utils/tuiCallKit'
 const store = useStore()
 
 onLaunch(async () => {
@@ -22,7 +22,17 @@ onLaunch(async () => {
     store.dispatch('websocket/initWebSocket', token)
     // 获取用户信息
     try {
-      await store.dispatch('fetchCurrentUser')
+      const result = await store.dispatch('fetchCurrentUser')
+      if (result.success) {
+        // 确保用户信息获取成功后再初始化TUICallKit
+        const user = store.getters.currentUser
+        if (user) {
+          loginTUICallKit(user,
+            () => console.log('App Launch: TUICallKit登录成功'),
+            (err) => console.error('App Launch: TUICallKit登录失败:', err)
+          )
+        }
+      }
     } catch (error) {
       console.error('Failed to fetch user info:', error)
       // 如果获取用户信息失败，可能是token过期，清除token并跳转到登录页

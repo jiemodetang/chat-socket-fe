@@ -24,6 +24,7 @@
     
     <!-- 功能列表 -->
     <view class="feature-list bg-white rounded-lg shadow margin-top">
+
       <view class="feature-item border-bottom" @click="goToSettings">
         <view class="feature-icon settings-icon">
           <u-icon name="setting" size="24" color="#2979ff"></u-icon>
@@ -86,6 +87,7 @@ const editProfile = () => {
     url: '/pages/edit-user/index'
   })
 }
+
 
 // 跳转到设置页面
 const goToSettings = () => {

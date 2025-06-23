@@ -1,6 +1,5 @@
 <template>
   <view class="chat-container" >
-    <CallScreen />
    
 
     <!-- 聊天消息列表 -->
@@ -50,8 +49,8 @@
                     <!-- 通话记录 -->
                     <view v-else-if="message.messageType === 'call'" class="call-record">
                       <view class="call-record-content">
-                        <u-icon name="phone-fill" size="24" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
-                        <text>{{ message.content }}</text>
+                        <u-icon :name="message.content.includes('视频') ? 'movie' : 'phone-fill'" size="20" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                        <text class="call-text">{{ message.content }}</text>
                       </view>
                     </view>
 
@@ -163,6 +162,12 @@
             </view>
             <text class="grid-item-text">语音通话</text>
           </view>
+          <view class="grid-item" @click="startVideoCall">
+            <view class="grid-item-icon">
+              <u-icon name="movie" size="32" color="#666"></u-icon>
+            </view>
+            <text class="grid-item-text">视频通话</text>
+          </view>
         </view>
       </view>
     </u-popup>
@@ -181,9 +186,19 @@ import { uploadFile } from '@/utils/upload'
 import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
 import VoiceRecorder from '@/components/VoiceRecorder.vue'
 import AudioMessage from '@/components/AudioMessage.vue'
-import CallScreen from '@/components/CallScreen.vue'
-import IncomingCallNotification from '@/components/IncomingCallNotification.vue'
-import { callManager } from '@/utils/call'
+import { genTestUserSig } from '@/debug/GenerateTestUserSig.js'
+import { loginTUICallKit, startCall as tuiStartCall, onCallEvent, offCallEvent, formatCallDuration } from '@/utils/tuiCallKit'
+
+// 导入TUICallKit插件
+let TUICallKit;
+try {
+  // #ifdef APP-PLUS
+  TUICallKit = uni.requireNativePlugin('TencentCloud-TUICallKit');
+  uni.$TUICallKit = TUICallKit;
+  // #endif
+} catch (error) {
+  console.error('TUICallKit 插件加载失败:', error);
+}
 
 const store = useStore()
 const {
@@ -345,13 +360,120 @@ onMounted(() => {
     store.commit('CLEAR_UNREAD', chatId.value);
     markMessagesAsRead();
   }
+  
+  // 仅在APP环境下初始化TUICallKit
+  // #ifdef APP-PLUS
+  // 登录TUICallKit
+  loginTUICallKitWrapper();
+  
+  // 添加通话事件监听
+  setupCallEventListeners();
+  // #endif
 })
+
+// 登录TUICallKit
+const loginTUICallKitWrapper = () => {
+  if (!currentUser.value || !currentUser.value._id) return;
+  loginTUICallKit(currentUser.value, 
+    () => { console.log('[TUICallKit] 登录成功'); },
+    (err) => { console.error('[TUICallKit] 登录失败:', err); }
+  );
+}
 
 // 页面卸载
 onUnmounted(() => {
   // 清除当前聊天
   store.commit('SET_CURRENT_CHAT', null)
+  
+  // 仅在APP环境下移除TUICallKit事件监听
+  // #ifdef APP-PLUS
+  // 移除通话事件监听
+  removeCallEventListeners();
+  // #endif
 })
+
+// 设置通话事件监听
+const setupCallEventListeners = () => {
+  onCallEvent('onCallEnd', callEndHandler);
+  onCallEvent('onUserReject', callRejectedHandler);
+  onCallEvent('onUserNoResponse', callNoResponseHandler);
+  onCallEvent('onUserLineBusy', callBusyHandler);
+  onCallEvent('onCallCancelled', callCancelledHandler);
+}
+
+// 防止重复发送通话消息的标志
+let callMessageSent = false;
+let callMessageTimer = null;
+
+// 重置通话消息状态
+const resetCallMessageStatus = () => {
+  callMessageSent = false;
+  if (callMessageTimer) {
+    clearTimeout(callMessageTimer);
+    callMessageTimer = null;
+  }
+};
+
+// 发送通话消息，带防重复机制
+const sendCallMessage = (message) => {
+  if (callMessageSent || !chatId.value) return;
+  
+  callMessageSent = true;
+  sendWebSocketMessage(chatId.value, message, 'call');
+  
+  // 5秒后重置状态，允许发送新的通话消息
+  callMessageTimer = setTimeout(() => {
+    resetCallMessageStatus();
+  }, 5000);
+};
+
+// 通话结束事件处理
+const callEndHandler = (res) => {
+  console.log('[TUICallKit] 通话结束:', res);
+  resetCallMessageStatus(); // 重置状态，确保能发送通话时长
+  
+  // 发送通话记录消息（仿微信简约风格）
+  if (chatId.value && res.code === 0 && res.data && res.data.duration) {
+    const duration = Math.floor(res.data.duration / 1000); // 转换为秒
+    if (duration > 0) {
+      // 使用formatCallDuration函数已经包含"通话时长"前缀
+      const durationText = formatCallDuration(duration);
+      sendWebSocketMessage(chatId.value, durationText, 'call');
+    } else {
+      sendWebSocketMessage(chatId.value, '通话时长 0秒', 'call');
+    }
+  } else {
+    // 通话未接通或异常结束，不发送消息，因为其他事件会处理
+  }
+};
+
+// 通话被拒绝事件处理
+const callRejectedHandler = (res) => {
+  console.log('[TUICallKit] 通话被拒绝:', res);
+  // 仿微信简约风格
+  sendCallMessage('对方已拒绝');
+};
+
+// 通话无人接听事件处理
+const callNoResponseHandler = (res) => {
+  console.log('[TUICallKit] 通话无人接听:', res);
+  // 仿微信简约风格
+  sendCallMessage('对方无人接听');
+};
+
+// 通话忙线事件处理
+const callBusyHandler = (res) => {
+  console.log('[TUICallKit] 通话忙线:', res);
+  // 仿微信简约风格
+  sendCallMessage('对方忙线中');
+};
+
+// 通话取消事件处理
+const callCancelledHandler = (res) => {
+  console.log('[TUICallKit] 通话已取消:', res);
+  // 仿微信简约风格
+  sendCallMessage('已取消');
+};
 
 // 发送消息
 const sendMessage = async () => {
@@ -714,32 +836,107 @@ const handleImageLoad = () => {
   }
 }
 
-// 发起语音通话
-const startVoiceCall = async () => {
-  try {
-    showPopup.value = false
-    const chat = store.state.chats.find(c => c._id === chatId.value)
-    if (!chat) {
-      throw new Error('找不到聊天信息')
-    }
-    
-    // 获取对方用户信息
-    const otherUser = chat.users.find(u => u._id !== currentUser.value._id)
-    if (!otherUser) {
-      throw new Error('找不到对方用户信息')
-    }
-    
-    // 发起通话
-    await callManager.makeCall(otherUser)
-  } catch (error) {
-    console.error('发起通话失败:', error)
+// 跳转到通话页面
+const goToCallPage = (callType = 1) => {
+  showPopup.value = false
+
+  // 检查插件是否可用
+  if (!uni.$TUICallKit) {
     uni.showToast({
-      title: error.message,
+      title: '通话功能仅在APP中可用',
       icon: 'none'
-    })
+    });
+    return;
   }
+
+  // 获取当前聊天对象的用户ID
+  const chat = store.state.chats.find(c => c._id === chatId.value)
+  if (chat && !chat.isGroupChat) {
+    const otherUser = chat.users.find(u => u._id !== currentUser.value._id)
+    if (otherUser && otherUser._id && typeof otherUser._id === 'string') {
+      console.log('[TUICallKit] 发起通话，目标用户ID:', otherUser._id);
+      // 发起通话，callType: 1-语音通话，2-视频通话
+      startCall(otherUser._id, callType);
+      return;
+    } else {
+      console.error('[TUICallKit] 无法获取有效的用户ID:', otherUser);
+      uni.showToast({
+        title: '无法获取有效的用户ID',
+        icon: 'none'
+      });
+      return;
+    }
+  }
+
+  // 如果是群聊或没找到对方用户ID，提示错误
+  uni.showToast({
+    title: '暂不支持群聊通话',
+    icon: 'none'
+  });
 }
 
+// 发起语音通话
+const startVoiceCall = () => {
+  goToCallPage(1); // 1表示语音通话
+}
+
+// 发起视频通话
+const startVideoCall = () => {
+  goToCallPage(2); // 2表示视频通话
+}
+
+// 发起通话
+const startCall = (targetUserId, callType = 1) => {
+  if (!targetUserId || typeof targetUserId !== 'string' || targetUserId === currentUser.value._id) {
+    console.error('[TUICallKit] 无效的通话对象ID:', targetUserId);
+    uni.showToast({ title: '无效的通话对象', icon: 'none' });
+    return;
+  }
+
+  // 确保用户ID是字符串类型
+  const userId = String(targetUserId).trim();
+  
+  console.log('[TUICallKit] 开始发起通话，目标用户ID:', userId, '通话类型:', callType);
+  
+  // 设置默认参数
+  const params = {
+    roomID: Math.floor(Math.random() * 1000000) + 1,
+    strRoomID: String(Date.now()),
+    timeout: 30
+  };
+  
+  // 重置通话消息状态，确保能发送新消息
+  resetCallMessageStatus();
+  
+  tuiStartCall(userId, callType, params, (res) => {
+    if (res.code === 0) {
+      // 仿微信发送简约的通话消息
+      const callTypeText = callType === 1 ? '语音通话' : '视频通话';
+      sendWebSocketMessage(chatId.value, callTypeText, 'call');
+    } else {
+      console.error('[TUICallKit] 发起通话失败:', res.msg, '用户ID:', userId);
+      uni.showToast({
+        title: '发起通话失败: ' + res.msg,
+        icon: 'none'
+      });
+    }
+  });
+}
+
+// 移除通话事件监听
+const removeCallEventListeners = () => {
+  offCallEvent('onCallEnd', callEndHandler);
+  offCallEvent('onUserReject', callRejectedHandler);
+  offCallEvent('onUserNoResponse', callNoResponseHandler);
+  offCallEvent('onUserLineBusy', callBusyHandler);
+  offCallEvent('onCallCancelled', callCancelledHandler);
+  
+  // 清除定时器
+  if (callMessageTimer) {
+    clearTimeout(callMessageTimer);
+    callMessageTimer = null;
+  }
+}
 
 </script>
 
@@ -1033,15 +1230,22 @@ const startVoiceCall = async () => {
   padding: 0 16rpx;
 }
 
+.call-record {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8rpx 0;
+}
+
 .call-record-content {
   display: flex;
   align-items: center;
-  gap: 12rpx;
+  gap: 8rpx;
 }
 
-.call-record-content text {
+.call-text {
   font-size: 28rpx;
-  color: currentColor;
+  color: inherit;
 }
 
 /* 输入区域样式调整 */
@@ -1209,37 +1413,36 @@ const startVoiceCall = async () => {
 }
 
 .popup-content {
-  padding: 20rpx;
+  padding: 30rpx 0;
 }
 
 .popup-grid {
   display: flex;
-  justify-content: space-around;
-  align-items: center;
-  width: 100%;
+  flex-wrap: wrap;
+  padding: 0 30rpx;
 }
 
 .grid-item {
+  width: 25%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 20rpx;
+  margin-bottom: 40rpx;
 }
 
 .grid-item-icon {
-  width: 80rpx;
-  height: 80rpx;
-  border-radius: 20rpx;
+  width: 100rpx;
+  height: 100rpx;
+  border-radius: 50%;
   background-color: #f5f5f5;
   display: flex;
-  align-items: center;
   justify-content: center;
-  margin-bottom: 10rpx;
+  align-items: center;
+  margin-bottom: 16rpx;
 }
 
 .grid-item-text {
   font-size: 24rpx;
-  color: #666;
+  color: #333;
 }
 </style>

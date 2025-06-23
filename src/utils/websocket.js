@@ -225,12 +225,6 @@ class WebSocketService {
     const { type, data } = message;
     console.log('WebSocket 处理消息:', { type, data });
     
-    // 特别关注通话相关消息
-    if (type === 'incoming-call' || type === 'call-accepted' || type === 'call-rejected' || 
-        type === 'call-ended' || type === 'ice-candidate' || type === 'offer' || type === 'answer') {
-      console.log('收到通话相关消息:', { type, data });
-    }
-    
     const handlers = this.messageHandlers.get(type) || [];
     console.log(`消息类型 ${type} 的处理器数量:`, handlers.length);
     
@@ -289,66 +283,7 @@ class WebSocketService {
     this.sendMessage('mark-read', { messageId });
   }
 
-  // 发送通话请求
-  sendCallRequest(targetUserId, callType, roomId) {
-    this.sendMessage('call', {
-      targetUserId,
-      callType, // 'audio' 或 'video'
-      roomId
-    });
-  }
 
-  // 发送接受通话
-  sendCallAccepted(callerId, roomId) {
-    this.sendMessage('call-accepted', {
-      callerId,
-      roomId
-    });
-  }
-
-  // 发送拒绝通话
-  sendCallRejected(callerId, reason = '对方已拒绝') {
-    this.sendMessage('call-rejected', {
-      callerId,
-      reason
-    });
-  }
-
-  // 发送结束通话
-  sendCallEnded(targetUserId, roomId, reason = '通话已结束') {
-    this.sendMessage('call-ended', {
-      targetUserId,
-      roomId,
-      reason
-    });
-  }
-
-  // 发送ICE候选者
-  sendIceCandidate(targetUserId, candidate, roomId) {
-    this.sendMessage('ice-candidate', {
-      targetUserId,
-      candidate,
-      roomId
-    });
-  }
-
-  // 发送通话offer
-  sendCallOffer(targetUserId, offer, roomId) {
-    this.sendMessage('offer', {
-      targetUserId,
-      offer,
-      roomId
-    });
-  }
-
-  // 发送通话answer
-  sendCallAnswer(targetUserId, answer, roomId) {
-    this.sendMessage('answer', {
-      targetUserId,
-      answer,
-      roomId
-    });
-  }
 
   // 关闭连接
   close() {

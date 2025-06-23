@@ -1,6 +1,5 @@
 import { computed } from 'vue';
 import { useStore } from 'vuex';
-import { callManager } from '@/utils/call';
 
 export function useWebSocket() {
   const store = useStore();

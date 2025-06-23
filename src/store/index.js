@@ -1,6 +1,7 @@
 import { createStore } from 'vuex'
 import api from '../utils/api'
 import websocket from './modules/websocket'
+import { loginTUICallKit } from '../utils/tuiCallKit'
 
 const store = createStore({
   state: {
@@ -163,6 +164,11 @@ const store = createStore({
         commit('SET_TOKEN', token)
         // 初始化WebSocket连接
         dispatch('websocket/initWebSocket', token, { root: true })
+        // 初始化TUICallKit
+        loginTUICallKit(user, 
+          () => console.log('TUICallKit登录成功'), 
+          (err) => console.error('TUICallKit登录失败:', err)
+        )
         return { success: true }
       } catch (error) {
         return { success: false, message: error.response?.data?.message || '登录失败' }
