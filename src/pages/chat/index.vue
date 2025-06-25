@@ -77,7 +77,7 @@
                     </view>
 
                     <!-- 文件消息 -->
-                    <view v-else-if="message.messageType === 'file'" class="file-message" :class="{'self-file-message': isSelfMessage(message)}">
+                    <view v-else-if="message.messageType === 'file'" class="file-message" :class="{'self-file-message': isSelfMessage(message)}" @click="downloadFile(message)">
                       <view class="file-icon" :class="getFileIconClass(message.content)">
                         <u-icon :name="getFileIconName(message.content)" size="28" color="#ffffff"></u-icon>
                       </view>
@@ -85,7 +85,7 @@
                         <text class="file-name" :class="{'self-file-text': isSelfMessage(message)}">{{ message.content }}</text>
                         <text class="file-size" :class="{'self-file-text': isSelfMessage(message)}">{{ formatFileSize(message.fileSize) }}</text>
                       </view>
-                      <view class="download-btn-wrapper" @click.stop="downloadFile(message)">
+                      <view class="download-btn-wrapper">
                         <view class="download-btn" :class="{'self-download-btn': isSelfMessage(message)}">
                           <u-icon name="download" size="20" :color="isSelfMessage(message) ? '#1989fa' : '#ffffff'"></u-icon>
                         </view>
@@ -191,7 +191,8 @@ import { useStore } from 'vuex'
 import { onLoad } from '@dcloudio/uni-app'
 import { currentConfig } from '../../config'
 import { useWebSocket } from '@/composables/useWebSocket'
-import { chooseAndUploadImage, uploadChatFile } from '@/utils/upload'
+import {  uploadChatFile } from '@/utils/upload'
+import { openDocument } from '@/utils/fileUpload'
 import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
 import VoiceRecorder from '@/components/VoiceRecorder.vue'
 import AudioMessage from '@/components/AudioMessage.vue'
@@ -517,17 +518,12 @@ const scrollToBottom = (immediate = false) => {
     if (lastMessage && lastMessage._id) {
       // 先设置滚动到指定消息
       scrollIntoView.value = `msg-${lastMessage._id}`
-      
       // 使用 nextTick 确保视图已更新
       nextTick(() => {
-        // 设置一个较大的值确保滚动到底部
-        scrollTop.value = 999999
-        
-        // 如果是立即滚动，添加额外的延时确保滚动生效
         if (immediate) {
           setTimeout(() => {
             scrollTop.value = 999999
-          }, 50)
+          }, 300)
         }
       })
     }
@@ -612,63 +608,28 @@ const previewImage = (url) => {
 
 // 下载文件
 const downloadFile = async (message) => {
-  // 防止事件冒泡
-  event?.stopPropagation?.();
+  console.log('downloadFile called with message:', message);
   
   try {
-    // 显示下载提示
-    uni.showLoading({
-      title: '文件下载中...',
-      mask: true
-    });
+    // 检查消息数据
+    if (!message || !message.fileUrl) {
+      console.error('Invalid message or missing fileUrl:', message);
+      uni.showToast({
+        title: '文件信息不完整',
+        icon: 'none'
+      });
+      return;
+    }
     
-    const res = await uni.downloadFile({
-      url: message.fileUrl,
-      success: (res) => {
-        uni.hideLoading();
-        if (res.statusCode === 200) {
-          // 显示成功提示
-          uni.showToast({
-            title: '下载成功',
-            icon: 'success',
-            duration: 1500
-          });
-          
-          setTimeout(() => {
-            // 尝试打开文件
-            uni.openDocument({
-              filePath: res.tempFilePath,
-              showMenu: true,
-              success: () => {
-                console.log('打开文档成功');
-              },
-              fail: (err) => {
-                console.error('打开文档失败', err);
-                uni.showToast({
-                  title: '无法打开此类型文件',
-                  icon: 'none'
-                });
-              }
-            });
-          }, 500);
-        } else {
-          uni.showToast({
-            title: '下载失败',
-            icon: 'none'
-          });
-        }
-      },
-      fail: (err) => {
-        uni.hideLoading();
-        console.error('下载失败:', err);
-        uni.showToast({
-          title: '下载失败',
-          icon: 'none'
-        });
-      }
-    });
+    // 使用工具函数打开文档
+    const fileInfo = { 
+      fileUrl: message.fileUrl,
+      fileName: message.content
+    };
+    
+    console.log('Opening document with fileInfo:', fileInfo);
+    await openDocument(fileInfo);
   } catch (error) {
-    uni.hideLoading();
     console.error('文件下载错误:', error);
     uni.showToast({
       title: '下载失败',
@@ -787,60 +748,65 @@ const handleAudioRecorded = (filePath, duration) => {
 }
 
 const chooseFile = () => {
-  // #ifdef APP-PLUS || H5
-  uni.chooseFile({
-    count: 1,
-    type: 'all',
-    success: async (res) => {
-      const tempFilePath = res.tempFilePaths[0]
-      const fileInfo = res.tempFiles[0]
+  // 调用新的文件选择和上传工具函数
+  console.log('调用新的文件选择和上传工具函数');
+  
+  chooseAndUploadDocument({
+    fileTypes: ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf', 'txt'],
+    onProgress: (progress) => {
+      console.log('上传进度:', progress)
+    },
+    onSuccess: (result) => {
+      console.log('文件上传成功:', result);
       
-      // 使用新的上传方法
-      uploadChatFile(tempFilePath, 'file', (progress) => {
-        console.log('Upload progress:', progress)
-      }).then(result => {
-        if (result && result.status === 'success') {
-          // 检查response格式，兼容两种数据结构
-          const fileData = result.data?.file || result.data
-          if (fileData) {
-            // 构建完整的文件URL并解码文件名
-            const fileUrl = fileData.url
-            const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
-            const decodedFileName = decodeFileName(fileData.fileName)
-            
-            // 发送消息，包括额外字段
-            sendWebSocketMessage(
-              chatId.value, 
-              decodedFileName || '文件消息', 
-              'file', 
-              {
-                fileUrl: fullUrl,
-                fileSize: fileInfo.size || 0,
-                fileType: fileData.fileType || '',
-                fileExt: fileData.fileName ? fileData.fileName.split('.').pop() : '',
-                originalFileName: fileData.fileName || decodedFileName || '文件消息'
-              }
-            )
-          }
+      if (result && result.status === 'success') {
+        // 检查response格式，兼容两种数据结构
+        const fileData = result.data?.file || result.data
+        if (fileData) {
+          // 构建完整的文件URL并解码文件名
+          const fileUrl = fileData.url
+          const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
+          const decodedFileName = decodeFileName(fileData.fileName)
+          
+          // 发送消息，包括额外字段
+          sendWebSocketMessage(
+            chatId.value, 
+            decodedFileName || '文件消息', 
+            'file', 
+            {
+              fileUrl: fullUrl,
+              fileSize: fileData.fileSize || 0,
+              fileType: fileData.fileType || '',
+              fileExt: fileData.fileExt || fileData.fileName?.split('.').pop() || '',
+              originalFileName: fileData.fileName || decodedFileName || '文件消息'
+            }
+          )
         }
-      }).catch(error => {
-        uni.showToast({
-          title: error.message || '上传失败',
-          icon: 'none'
-        })
+      }
+      
+      showPopup.value = false
+    },
+    onFail: (error) => {
+      console.error('文件上传失败:', error);
+      
+      uni.showToast({
+        title: error.message || '上传失败',
+        icon: 'none'
       })
       
       showPopup.value = false
     }
+  }).catch(error => {
+    console.error('文件选择失败:', error)
+    
+    // 如果是用户取消，不显示错误提示
+    if (error.message !== 'File selection cancelled') {
+      uni.showToast({
+        title: '文件选择失败',
+        icon: 'none'
+      })
+    }
   })
-  // #endif
-  
-  // #ifdef MP-WEIXIN || MP-ALIPAY || MP-BAIDU || MP-TOUTIAO || MP-QQ
-  uni.showToast({
-    title: '小程序暂不支持选择文件',
-    icon: 'none'
-  })
-  // #endif
 }
 
 // 音频播放相关
@@ -1353,6 +1319,7 @@ const getFileIconName = (fileName) => {
   box-shadow: 0 2rpx 6rpx rgba(0,0,0,0.05);
   transition: all 0.2s ease;
   position: relative;
+  cursor: pointer;
 }
 
 .message-mine .message-bubble .message-content .file-message,
@@ -1363,8 +1330,13 @@ const getFileIconName = (fileName) => {
 }
 
 .file-message:active {
-  opacity: 0.9;
+  opacity: 0.8;
   transform: scale(0.98);
+  background-color: #f5f5f5;
+}
+
+.self-file-message:active {
+  background-color: #d1e7ff;
 }
 
 .self-file-message {

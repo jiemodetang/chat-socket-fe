@@ -174,7 +174,6 @@ const editProfile = () => {
   })
 }
 
-
 // 跳转到设置页面
 const goToSettings = () => {
   uni.navigateTo({
