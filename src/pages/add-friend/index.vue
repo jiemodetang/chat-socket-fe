@@ -14,14 +14,21 @@
     <!-- 用户列表 -->
     <view class="users-container">
       <!-- 加载状态 -->
-      <view v-if="isLoadingAllUsers" class="loading-state">
-        <text>加载中...</text>
+      <view v-if="isLoadingAllUsers || isSearching" class="loading-state">
+        <u-loading-icon mode="circle" size="40"></u-loading-icon>
+        <text class="loading-text">加载中...</text>
       </view>
 
       <!-- 初始状态 -->
       <view v-else-if="!hasSearched && displayUsers.length === 0" class="initial-state">
-        <image class="initial-icon" src="/static/search-friends.png" mode="aspectFit"></image>
+        <u-icon name="search" size="80" color="#c0c4cc"></u-icon>
         <text class="initial-text">搜索用户名或邮箱添加好友</text>
+      </view>
+
+      <!-- 空搜索结果 -->
+      <view v-else-if="hasSearched && displayUsers.length === 0" class="empty-state">
+        <u-icon name="info-circle" size="80" color="#c0c4cc"></u-icon>
+        <text class="empty-text">未找到匹配的用户</text>
       </view>
 
       <!-- 用户列表 -->
@@ -40,9 +47,10 @@
 
           <view class="action-buttons">
             <text v-if="isCurrentUser(user._id)" class="status-text">自己</text>
-            <button v-else-if="!isFriend(user._id)" class="action-btn add"
-              @click="handleAddFriend(user._id)">添加</button>
-            <text v-else-if="isFriend(user._id)" class="status-text">已是好友</text>
+            <button v-else-if="isFriend(user._id)" class="action-btn chat" @click="handleStartChat(user._id)">聊天</button>
+            <button v-else-if="hasReceivedRequest(user._id)" class="action-btn accept" @click="handleAcceptRequest(user._id)">接受</button>
+            <button v-else-if="hasSentRequest(user._id)" class="status-text">已发送</button>
+            <button v-else class="action-btn add" @click="handleSendRequest(user._id)">添加</button>
           </view>
         </view>
       </scroll-view>
@@ -52,7 +60,9 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { useStore } from 'vuex'
+// 确保已在main.js中全局引入uview-plus
 
 const store = useStore()
 const searchQuery = ref('')
@@ -64,17 +74,19 @@ const hasSearched = ref(false)
 const friends = computed(() => store.state.friends)
 
 // 获取好友请求列表
-const friendRequests = computed(() => store.state.friendRequests)
+const pendingRequests = computed(() => store.getters.pendingFriendRequests || [])
 
 const allUsers = computed(() => store.state.allUsers)
 const isLoadingAllUsers = ref(false)
 
 // 计算要显示的用户列表
 const displayUsers = computed(() => {
+  // 如果已经搜索过，显示所有搜索结果
   if (hasSearched.value && searchQuery.value.trim()) {
-    return searchResults.value
+    return searchResults.value;
   }
-  return allUsers.value
+  // 直接显示好友列表
+  return friends.value;
 })
 
 onMounted(async () => {
@@ -87,9 +99,10 @@ onMounted(async () => {
 
   try {
     isLoadingAllUsers.value = true
-    await store.dispatch('fetchAllUsers')
+    // 获取好友列表而非所有用户
+    await store.dispatch('fetchFriends')
   } catch (error) {
-    console.error('Failed to fetch all users:', error)
+    console.error('Failed to fetch friends:', error)
   } finally {
     isLoadingAllUsers.value = false
   }
@@ -108,10 +121,23 @@ const handleSearch = async () => {
   hasSearched.value = true
 
   try {
+    // 使用API接口搜索用户
     const response = await store.dispatch('searchUsers', searchQuery.value.trim())
-    searchResults.value = response.users
+    if (response.success && response.users) {
+      console.log(response.users);
+      
+      searchResults.value = response.users
+      // 不需要在这里显示toast，因为已经有空状态UI了
+    } else {
+      searchResults.value = []
+      uni.showToast({
+        title: response.message || '未找到匹配用户',
+        icon: 'none'
+      })
+    }
   } catch (error) {
     console.error('Failed to search users:', error)
+    searchResults.value = []
     uni.showToast({
       title: '搜索失败',
       icon: 'none'
@@ -137,19 +163,104 @@ const isCurrentUser = (userId) => {
   return store.state.user?._id === userId
 }
 
-// 添加好友
-const handleAddFriend = async (userId) => {
+// 判断是否已发送好友请求
+const hasSentRequest = (userId) => {
+  // 在实际应用中，你可能需要从服务器获取已发送的请求
+  return false // 暂时假设没有发送过
+}
+
+// 判断是否已接收到好友请求
+const hasReceivedRequest = (userId) => {
+  return pendingRequests.value.some(request => request.sender._id === userId)
+}
+
+// 发送好友请求
+const handleSendRequest = async (userId) => {
   try {
-    await store.dispatch('sendFriendRequest', userId)
-    uni.showToast({
-      title: '已添加好友',
-      icon: 'success'
-    })
-    await store.dispatch('fetchFriends')
+    // 通过API发送好友请求
+    const response = await store.dispatch('sendFriendRequest', userId)
+    if (response.success) {
+      // 发送WebSocket通知
+      store.dispatch('websocket/sendFriendRequestNotification', userId)
+      
+      uni.showToast({
+        title: response.message || '好友请求已发送',
+        icon: 'success'
+      })
+    } else {
+      uni.showToast({
+        title: response.message || '发送请求失败',
+        icon: 'none'
+      })
+    }
+    
+    // 刷新搜索结果
+    if (searchQuery.value.trim()) {
+      await handleSearch()
+    }
   } catch (error) {
     console.error('Failed to send friend request:', error)
     uni.showToast({
       title: '发送请求失败',
+      icon: 'none'
+    })
+  }
+}
+
+// 接受好友请求
+const handleAcceptRequest = async (userId) => {
+  // 找到对应的请求ID
+  const request = pendingRequests.value.find(req => req.sender._id === userId)
+  if (!request) return
+  
+  try {
+    const response = await store.dispatch('acceptFriendRequest', request._id)
+    if (response.success) {
+      uni.showToast({
+        title: response.message || '已添加好友',
+        icon: 'success'
+      })
+      // 刷新搜索结果
+      if (searchQuery.value.trim()) {
+        await handleSearch()
+      }
+    } else {
+      uni.showToast({
+        title: response.message || '添加好友失败',
+        icon: 'none'
+      })
+    }
+  } catch (error) {
+    console.error('Failed to accept friend request:', error)
+    uni.showToast({
+      title: '添加好友失败',
+      icon: 'none'
+    })
+  }
+}
+
+// 开始聊天
+const handleStartChat = async (userId) => {
+  try {
+    const result = await store.dispatch('createSingleChat', userId)
+    if (result.success) {
+      // 设置当前聊天
+      store.commit('SET_CURRENT_CHAT', result.chat._id)
+      
+      // 跳转到聊天页面
+      uni.navigateTo({
+        url: `/pages/chat/index?id=${result.chat._id}`
+      })
+    } else {
+      uni.showToast({
+        title: '创建聊天失败',
+        icon: 'none'
+      })
+    }
+  } catch (error) {
+    console.error('Failed to create chat:', error)
+    uni.showToast({
+      title: '创建聊天失败',
       icon: 'none'
     })
   }
@@ -226,26 +337,20 @@ const handleAddFriend = async (userId) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
-}
-
-.initial-icon,
-.empty-icon {
-  width: 200rpx;
-  height: 200rpx;
-  margin-bottom: 30rpx;
-  opacity: 0.5;
+  height: 80%;
 }
 
 .initial-text,
 .empty-text {
   font-size: 30rpx;
   color: #999;
+  margin-top: 20rpx;
 }
 
-.loading-state text {
+.loading-text {
   font-size: 30rpx;
   color: #999;
+  margin-top: 20rpx;
 }
 
 .user-list {
@@ -315,6 +420,16 @@ const handleAddFriend = async (userId) => {
 
 .action-btn.add {
   background-color: var(--primary-color);
+  color: #ffffff;
+}
+
+.action-btn.accept {
+  background-color: #09BB07;
+  color: #ffffff;
+}
+
+.action-btn.chat {
+  background-color: #1989fa;
   color: #ffffff;
 }
 

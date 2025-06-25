@@ -12,7 +12,8 @@ const store = createStore({
     messages: {},
     friends: [],
     allUsers: [],
-    unreadMessages: {}
+    unreadMessages: {},
+    friendRequests: [], // 添加好友请求列表
     // unreadMessages 格式: { chatId: count }
   },
   mutations: {
@@ -125,6 +126,20 @@ const store = createStore({
     REMOVE_FRIEND(state, friendId) {
       state.friends = state.friends.filter(f => f._id !== friendId)
     },
+    // 好友请求相关
+    SET_FRIEND_REQUESTS(state, requests) {
+      state.friendRequests = requests
+    },
+    ADD_FRIEND_REQUEST(state, request) {
+      // 检查是否已存在相同的请求
+      const exists = state.friendRequests.some(req => req._id === request._id)
+      if (!exists) {
+        state.friendRequests.push(request)
+      }
+    },
+    REMOVE_FRIEND_REQUEST(state, requestId) {
+      state.friendRequests = state.friendRequests.filter(request => request._id !== requestId)
+    },
     // 所有用户相关
     SET_ALL_USERS(state, users) {
       state.allUsers = Array.isArray(users) ? users : []
@@ -152,7 +167,17 @@ const store = createStore({
         commit('SET_TOKEN', token)
         return { success: true }
       } catch (error) {
-        return { success: false, message: error.response?.data?.message || '注册失败' }
+        // 提取错误信息
+        let errorMessage = '注册失败';
+        if (error instanceof Error) {
+          errorMessage = error.message;
+        } else if (typeof error === 'string') {
+          errorMessage = error;
+        } else if (error && error.message) {
+          errorMessage = error.message;
+        }
+        
+        return { success: false, message: errorMessage }
       }
     },
 
@@ -165,13 +190,25 @@ const store = createStore({
         // 初始化WebSocket连接
         dispatch('websocket/initWebSocket', token, { root: true })
         // 初始化TUICallKit
-        loginTUICallKit(user, 
-          () => console.log('TUICallKit登录成功'), 
-          (err) => console.error('TUICallKit登录失败:', err)
-        )
+       // #ifndef H5
+        if (user) {
+          loginTUICallKit(user,
+            () => console.log('App Launch: TUICallKit登录成功'),
+            (err) => console.error('App Launch: TUICallKit登录失败:', err)
+          )
+        }
         return { success: true }
       } catch (error) {
-        return { success: false, message: error.response?.data?.message || '登录失败' }
+           // 提取错误信息
+           let errorMessage = '登录失败';
+           if (error instanceof Error) {
+             errorMessage = error.message;
+           } else if (typeof error === 'string') {
+             errorMessage = error;
+           } else if (error && error.message) {
+             errorMessage = error.message;
+           }
+        return { success: false, message:errorMessage }
       }
     },
 
@@ -273,10 +310,16 @@ const store = createStore({
 
     async searchUsers(_, query) {
       try {
-        const users = await api.users.search(query)
-        return { success: true, users: users.users }
+        const response = await api.users.search(query)
+        return { 
+          success: true, 
+          users: response.users || [],
+        }
       } catch (error) {
-        return { success: false }
+        return { 
+          success: false, 
+          message: error.message || '搜索失败'
+        }
       }
     },
 
@@ -290,13 +333,75 @@ const store = createStore({
       }
     },
 
+    // 发送好友请求
     async sendFriendRequest({ commit }, friendId) {
       try {
-        const friend = await api.users.addFriend(friendId)
-        commit('ADD_FRIEND', friend.user)
-        return { success: true }
+        const response = await api.users.sendFriendRequest(friendId)
+        return { 
+          success: true, 
+          message: response.message || '好友请求已发送'
+        }
       } catch (error) {
-        return { success: false }
+        return { 
+          success: false, 
+          message: error.message || '发送好友请求失败'
+        }
+      }
+    },
+
+    // 获取好友请求列表
+    async fetchFriendRequests({ commit }) {
+      try {
+        const response = await api.users.getFriendRequests()
+        commit('SET_FRIEND_REQUESTS', response.requests)
+        return { 
+          success: true, 
+          requests: response.requests 
+        }
+      } catch (error) {
+        return { 
+          success: false, 
+          message: error.message || '获取好友请求失败'
+        }
+      }
+    },
+    
+    // 接受好友请求
+    async acceptFriendRequest({ commit, dispatch }, requestId) {
+      try {
+        const response = await api.users.acceptFriendRequest(requestId)
+        commit('REMOVE_FRIEND_REQUEST', requestId)
+        
+        // 更新好友列表
+        await dispatch('fetchFriends')
+        
+        return { 
+          success: true, 
+          message: response.message || '已接受好友请求',
+          user: response.user
+        }
+      } catch (error) {
+        return { 
+          success: false, 
+          message: error.message || '接受好友请求失败'
+        }
+      }
+    },
+    
+    // 拒绝好友请求
+    async rejectFriendRequest({ commit }, requestId) {
+      try {
+        const response = await api.users.rejectFriendRequest(requestId)
+        commit('REMOVE_FRIEND_REQUEST', requestId)
+        return { 
+          success: true, 
+          message: response.message || '已拒绝好友请求'
+        }
+      } catch (error) {
+        return { 
+          success: false, 
+          message: error.message || '拒绝好友请求失败'
+        }
       }
     },
 
@@ -329,6 +434,8 @@ const store = createStore({
     unreadCount: state => Object.values(state.unreadMessages).reduce((a, b) => a + b, 0),
     friendsList: state => state.friends || [],
     allUsersList: state => state.allUsers || [],
+    pendingFriendRequests: state => state.friendRequests || [],
+    pendingFriendRequestsCount: state => state.friendRequests.length,
     sortedChats: state => {
       if (!state.chats || !Array.isArray(state.chats)) return []
       

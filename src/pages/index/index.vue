@@ -79,7 +79,6 @@
       </view>
     </scroll-view>
     
-    <incoming-call-notification />
   </view>
 </template>
 

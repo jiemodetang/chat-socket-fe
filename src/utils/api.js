@@ -174,11 +174,31 @@ const apiService = {
       method: 'GET'
     }),
     
-    // 添加好友
-    addFriend: (friendId) => request({
-      url: '/users/friends',
+    // 发送好友请求
+    sendFriendRequest: (friendId) => request({
+      url: '/users/friend-request',
       method: 'POST',
       data: { friendId }
+    }),
+    
+    // 获取好友请求列表
+    getFriendRequests: () => request({
+      url: '/users/friend-requests',
+      method: 'GET'
+    }),
+    
+    // 接受好友请求
+    acceptFriendRequest: (requestId) => request({
+      url: '/users/friend-request/accept',
+      method: 'POST',
+      data: { requestId }
+    }),
+    
+    // 拒绝好友请求
+    rejectFriendRequest: (requestId) => request({
+      url: '/users/friend-request/reject',
+      method: 'POST',
+      data: { requestId }
     }),
     
     // 删除好友

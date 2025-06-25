@@ -1,5 +1,5 @@
 {
-    "name" : "socket-chat-app",
+    "name" : "畅聊社",
     "appid" : "__UNI__C045C71",
     "description" : "Socket Chat Application",
     "versionName" : "1.0.8",
@@ -24,7 +24,9 @@
             "VideoPlayer" : {},
             "Audio" : {},
             "Recorder" : {},
-            "Webview-x5" : {}
+            "Webview-x5" : {},
+            "Record" : {},
+            "Camera" : {}
         },
         "distribute" : {
             "android" : {
@@ -141,6 +143,20 @@
                     "pid" : "9035",
                     "parameters" : {}
                 }
+            },
+            "TencentCloud-TUIRoomEngine" : {
+                "__plugin_info__" : {
+                    "name" : "【官方】腾讯云多人会议插件 TencentCloud-TUIRoomEngine",
+                    "description" : "TencentCloud-TUIRoomEngine 是腾讯云官方推出的多人会议插件。提供房间管理、音视频控制、屏幕共享、成员管理、麦位管理等能力。",
+                    "platforms" : "Android,iOS",
+                    "url" : "https://ext.dcloud.net.cn/plugin?id=18466",
+                    "android_package_name" : "socket.io",
+                    "ios_bundle_id" : "socket.io",
+                    "isCloud" : true,
+                    "bought" : 1,
+                    "pid" : "18466",
+                    "parameters" : {}
+                }
             }
         }
     },
@@ -198,6 +214,11 @@
                     "H5-WEIXIN" : true
                 }
             }
+        }
+    },
+    "app-harmony" : {
+        "distribute" : {
+            "bundleName" : "socket.io.app"
         }
     }
 }

@@ -11,7 +11,35 @@ import { useStore } from 'vuex'
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
 import { mapState, mapActions } from 'vuex'
 import { loginTUICallKit } from '@/utils/tuiCallKit'
+import { watch } from 'vue'
+
 const store = useStore()
+
+// 监听好友请求数量变化，更新角标
+watch(() => store.getters.pendingFriendRequestsCount, (newCount) => {
+  updateTabBarBadge(newCount)
+})
+
+// 更新Tab角标
+const updateTabBarBadge = (count) => {
+  if (count > 0) {
+    // 设置角标
+    uni.setTabBarBadge({
+      index: 1, // 通讯录的索引
+      text: count.toString()
+    }).catch(err => {
+      console.log('Failed to set badge:', err)
+    })
+  } else {
+    // 移除角标
+    uni.removeTabBarBadge({
+      index: 1
+    }).catch(err => {
+      // 忽略可能的错误（如果角标不存在）
+      console.log('No badge to remove')
+    })
+  }
+}
 
 onLaunch(async () => {
   console.log('App Launch')
@@ -32,6 +60,12 @@ onLaunch(async () => {
             (err) => console.error('App Launch: TUICallKit登录失败:', err)
           )
         }
+        
+        // 获取好友请求
+        await store.dispatch('fetchFriendRequests')
+        
+        // 初始化角标
+        updateTabBarBadge(store.getters.pendingFriendRequestsCount)
       }
     } catch (error) {
       console.error('Failed to fetch user info:', error)
@@ -46,6 +80,11 @@ onLaunch(async () => {
 
 onShow(() => {
   console.log('App Show')
+  // 应用显示时更新角标
+  const count = store.getters.pendingFriendRequestsCount
+  if (count !== undefined) {
+    updateTabBarBadge(count)
+  }
 })
 
 onHide(() => {

@@ -3,16 +3,23 @@ import { genTestUserSig } from '@/debug/GenerateTestUserSig.js'
 
 // 获取TUICallKit插件实例
 let TUICallKit = null;
+let TUICallKitEvent = null;
+
 // #ifdef APP-PLUS
 TUICallKit = uni.requireNativePlugin('TencentCloud-TUICallKit');
 uni.$TUICallKit = TUICallKit;
-// #endif
 
 // 获取全局事件对象
-const TUICallKitEvent = uni.requireNativePlugin('globalEvent');
+TUICallKitEvent = uni.requireNativePlugin('globalEvent');
+// #endif
 
 // 初始化通话事件监听
 const initCallEventListeners = () => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit');
+  return;
+  // #endif
+  
   if (!TUICallKitEvent) {
     console.error('[TUICallKit] globalEvent 未初始化');
     return;
@@ -174,6 +181,12 @@ const initCallEventListeners = () => {
 
 // 登录TUICallKit
 export const loginTUICallKit = (user, onSuccess, onError) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过登录');
+  onSuccess && onSuccess();
+  return;
+  // #endif
+  
   if (!TUICallKit || !user || !user._id) {
     onError && onError('TUICallKit未初始化或用户信息无效');
     return;
@@ -211,6 +224,12 @@ export const loginTUICallKit = (user, onSuccess, onError) => {
 
 // 发起通话
 export const startCall = (targetUserId, callType = 1, params = {}, callback) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过发起通话');
+  callback && callback({ code: 0, msg: 'H5环境下不支持通话功能' });
+  return;
+  // #endif
+  
   if (!TUICallKit) {
     callback({ code: -1, msg: 'TUICallKit未初始化' });
     return;
@@ -253,6 +272,12 @@ export const startCall = (targetUserId, callType = 1, params = {}, callback) => 
 
 // 接听来电
 export const acceptCall = (callback) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过接听来电');
+  callback && callback({ code: 0, msg: 'H5环境下不支持通话功能' });
+  return;
+  // #endif
+  
   if (!TUICallKit) {
     callback && callback({ code: -1, msg: 'TUICallKit未初始化' });
     return;
@@ -275,6 +300,12 @@ export const acceptCall = (callback) => {
 
 // 拒绝来电
 export const rejectCall = (callback) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过拒绝来电');
+  callback && callback({ code: 0, msg: 'H5环境下不支持通话功能' });
+  return;
+  // #endif
+  
   if (!TUICallKit) {
     callback && callback({ code: -1, msg: 'TUICallKit未初始化' });
     return;
@@ -297,6 +328,11 @@ export const rejectCall = (callback) => {
 
 // 添加通话事件监听
 export const onCallEvent = (eventName, callback) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过添加事件监听');
+  return;
+  // #endif
+  
   if (!TUICallKitEvent) {
     console.error('[TUICallKit] globalEvent 未初始化');
     return;
@@ -311,6 +347,11 @@ export const onCallEvent = (eventName, callback) => {
 
 // 移除通话事件监听
 export const offCallEvent = (eventName, callback) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过移除事件监听');
+  return;
+  // #endif
+  
   if (!TUICallKitEvent) {
     console.error('[TUICallKit] globalEvent 未初始化');
     return;
@@ -325,6 +366,11 @@ export const offCallEvent = (eventName, callback) => {
 
 // 开启/关闭悬浮窗功能
 export const enableFloatWindow = (enable = true) => {
+  // #ifdef H5
+  console.log('[TUICallKit] H5环境下不支持TUICallKit, 跳过设置悬浮窗');
+  return;
+  // #endif
+  
   if (!TUICallKit) return;
   
   try {

@@ -10,13 +10,12 @@ export function useWebSocket() {
   };
 
   // 发送消息
-  const sendMessage = (chatId, content, messageType = 'text', fileUrl = '', duration = 0) => {
+  const sendMessage = (chatId, content, messageType = 'text', extraFields = {}) => {
     store.dispatch('websocket/sendMessage', {
       chatId,
       content,
       messageType,
-      fileUrl,
-      duration
+      ...extraFields
     });
   };
 

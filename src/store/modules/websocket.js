@@ -5,7 +5,8 @@ const state = {
   onlineUsers: [],
   currentUser: null,
   typingUsers: new Map(),
-  unreadMessages: new Map()
+  unreadMessages: new Map(),
+  latestFriendRequest: null
 };
 
 const mutations = {
@@ -46,11 +47,14 @@ const mutations = {
       state.unreadMessages.set(chatId, new Set());
     }
     state.unreadMessages.get(chatId).size++;
+  },
+  SET_LATEST_FRIEND_REQUEST(state, request) {
+    state.latestFriendRequest = request;
   }
 };
 
 const actions = {
-  initWebSocket({ commit }, token) {
+  initWebSocket({ commit, dispatch }, token) {
     websocketService.init(token);
 
     // 注册消息处理器
@@ -90,11 +94,56 @@ const actions = {
       // 处理消息已读状态
     });
 
+    // 好友请求通知 - 当收到新的好友请求时
+    websocketService.on('friend-request-notification', (data) => {
+      // 保存发送者信息
+      commit('SET_LATEST_FRIEND_REQUEST', {
+        sender: data.sender,
+        createdAt: new Date()
+      });
+      
+      // 显示通知
+      uni.showToast({
+        title: `收到来自 ${data.sender.username} 的好友请求`,
+        icon: 'none',
+        duration: 3000
+      });
+      
+      // 震动提示
+      if (uni.getSystemInfoSync().platform !== 'devtools') {
+        uni.vibrateLong();
+      }
+      
+      // 更新好友请求列表 - 通过API获取最新的好友请求列表
+      dispatch('fetchFriendRequests', null, { root: true });
+    });
 
+    // 好友请求被接受通知
+    websocketService.on('friend-request-accepted-notification', (data) => {
+      // 显示通知
+      uni.showToast({
+        title: `${data.user.username} 已接受您的好友请求`,
+        icon: 'success',
+        duration: 3000
+      });
+      
+      // 更新好友列表 - 通过API获取最新的好友列表
+      dispatch('fetchFriends', null, { root: true });
+    });
+
+    // 好友请求被拒绝通知
+    websocketService.on('friend-request-rejected-notification', (data) => {
+      // 显示通知
+      uni.showToast({
+        title: `用户已拒绝您的好友请求`,
+        icon: 'none',
+        duration: 3000
+      });
+    });
   },
 
-  sendMessage({ state }, { chatId, content, messageType = 'text', fileUrl = '', duration = 0 }) {
-    websocketService.sendChatMessage(chatId, content, messageType, fileUrl, duration);
+  sendMessage({ state }, { chatId, content, messageType = 'text', ...extraFields }) {
+    websocketService.sendChatMessage(chatId, content, messageType, extraFields);
   },
 
   sendTypingStatus({ state }, chatId) {
@@ -117,7 +166,23 @@ const actions = {
     commit('SET_ONLINE_USERS', []);
   },
 
+  fetchFriendRequests({ commit }) {
+    // Implementation of fetchFriendRequests action
+  },
 
+  fetchFriends({ commit }) {
+    // Implementation of fetchFriends action
+  },
+
+  // 发送好友请求通知
+  sendFriendRequestNotification({ state }, targetUserId) {
+    websocketService.sendFriendRequestNotification(targetUserId);
+  },
+  
+  // 发送好友请求响应通知
+  sendFriendRequestResponseNotification({ state }, { senderId, response }) {
+    websocketService.sendFriendRequestResponseNotification(senderId, response);
+  }
 };
 
 const getters = {
@@ -129,7 +194,8 @@ const getters = {
   },
   getUnreadMessageCount: state => chatId => {
     return state.unreadMessages.get(chatId)?.size || 0;
-  }
+  },
+  latestFriendRequest: state => state.latestFriendRequest
 };
 
 export default {

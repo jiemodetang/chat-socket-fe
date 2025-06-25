@@ -55,9 +55,11 @@
                     </view>
 
                     <!-- 图片消息 -->
-                    <image v-else-if="message.messageType === 'image'" :src="message.fileUrl" 
-                      mode="widthFix" class="message-image" @click="previewImage(message.fileUrl)"
-                      @load="handleImageLoad"></image>
+                    <view v-else-if="message.messageType === 'image'" class="image-container">
+                      <image :src="message.fileUrl" 
+                        mode="widthFix" class="message-image" @click="previewImage(message.fileUrl)"
+                        @load="handleImageLoad"></image>
+                    </view>
 
                     <!-- 音频消息 -->
                     <view v-else-if="message.messageType === 'audio'" class="audio-message" 
@@ -75,15 +77,19 @@
                     </view>
 
                     <!-- 文件消息 -->
-                    <view v-else-if="message.messageType === 'file'" class="file-message">
-                      <view class="file-icon">
-                        <u-icon name="file-text" size="24" :color="isSelfMessage(message) ? '#fff' : '#666'"></u-icon>
+                    <view v-else-if="message.messageType === 'file'" class="file-message" :class="{'self-file-message': isSelfMessage(message)}">
+                      <view class="file-icon" :class="getFileIconClass(message.content)">
+                        <u-icon :name="getFileIconName(message.content)" size="28" color="#ffffff"></u-icon>
                       </view>
                       <view class="file-info">
-                        <text class="file-name">{{ message.content }}</text>
-                        <text class="file-size">{{ formatFileSize(message.fileSize) }}</text>
+                        <text class="file-name" :class="{'self-file-text': isSelfMessage(message)}">{{ message.content }}</text>
+                        <text class="file-size" :class="{'self-file-text': isSelfMessage(message)}">{{ formatFileSize(message.fileSize) }}</text>
                       </view>
-                      <button class="download-btn" @click="downloadFile(message)">下载</button>
+                      <view class="download-btn-wrapper" @click.stop="downloadFile(message)">
+                        <view class="download-btn" :class="{'self-download-btn': isSelfMessage(message)}">
+                          <u-icon name="download" size="20" :color="isSelfMessage(message) ? '#1989fa' : '#ffffff'"></u-icon>
+                        </view>
+                      </view>
                     </view>
                   </view>
 
@@ -156,18 +162,21 @@
             </view>
             <text class="grid-item-text">文件</text>
           </view>
-          <view class="grid-item" @click="startVoiceCall">
-            <view class="grid-item-icon">
-              <u-icon name="phone-fill" size="32" color="#666"></u-icon>
+          <!-- 只在单聊中显示语音和视频通话 -->
+          <template v-if="!isGroupChat">
+            <view class="grid-item" @click="startVoiceCall">
+              <view class="grid-item-icon">
+                <u-icon name="phone-fill" size="32" color="#666"></u-icon>
+              </view>
+              <text class="grid-item-text">语音通话</text>
             </view>
-            <text class="grid-item-text">语音通话</text>
-          </view>
-          <view class="grid-item" @click="startVideoCall">
-            <view class="grid-item-icon">
-              <u-icon name="movie" size="32" color="#666"></u-icon>
+            <view class="grid-item" @click="startVideoCall">
+              <view class="grid-item-icon">
+                <u-icon name="movie" size="32" color="#666"></u-icon>
+              </view>
+              <text class="grid-item-text">视频通话</text>
             </view>
-            <text class="grid-item-text">视频通话</text>
-          </view>
+          </template>
         </view>
       </view>
     </u-popup>
@@ -182,7 +191,7 @@ import { useStore } from 'vuex'
 import { onLoad } from '@dcloudio/uni-app'
 import { currentConfig } from '../../config'
 import { useWebSocket } from '@/composables/useWebSocket'
-import { uploadFile } from '@/utils/upload'
+import { chooseAndUploadImage, uploadChatFile } from '@/utils/upload'
 import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
 import VoiceRecorder from '@/components/VoiceRecorder.vue'
 import AudioMessage from '@/components/AudioMessage.vue'
@@ -419,7 +428,7 @@ const sendCallMessage = (message) => {
   if (callMessageSent || !chatId.value) return;
   
   callMessageSent = true;
-  sendWebSocketMessage(chatId.value, message, 'call');
+  sendWebSocketMessage(chatId.value, message, 'call', {});
   
   // 5秒后重置状态，允许发送新的通话消息
   callMessageTimer = setTimeout(() => {
@@ -438,9 +447,9 @@ const callEndHandler = (res) => {
     if (duration > 0) {
       // 使用formatCallDuration函数已经包含"通话时长"前缀
       const durationText = formatCallDuration(duration);
-      sendWebSocketMessage(chatId.value, durationText, 'call');
+      sendWebSocketMessage(chatId.value, durationText, 'call', {});
     } else {
-      sendWebSocketMessage(chatId.value, '通话时长 0秒', 'call');
+      sendWebSocketMessage(chatId.value, '通话时长 0秒', 'call', {});
     }
   } else {
     // 通话未接通或异常结束，不发送消息，因为其他事件会处理
@@ -484,7 +493,7 @@ const sendMessage = async () => {
   
   try {
     // 发送消息到WebSocket
-    sendWebSocketMessage(chatId.value, content, 'text')
+    sendWebSocketMessage(chatId.value, content, 'text', {})
     
     // 滚动到底部
     nextTick(() => {
@@ -562,7 +571,12 @@ const isSelfMessage = (message) => {
 const getSenderAvatar = (message) => {
   if (!message || !message.sender) return '/static/default-avatar.png'
   
-  // 如果是群聊，显示发送者头像
+  // 如果是自己发送的消息，显示自己的头像
+  if (isSelfMessage(message)) {
+    return currentUser.value?.avatar || '/static/default-avatar.png'
+  }
+  
+  // 如果是群聊中他人发送的消息，显示发送者头像
   if (isGroupChat.value) {
     return message.sender.avatar || '/static/default-avatar.png'
   }
@@ -598,25 +612,68 @@ const previewImage = (url) => {
 
 // 下载文件
 const downloadFile = async (message) => {
+  // 防止事件冒泡
+  event?.stopPropagation?.();
+  
   try {
+    // 显示下载提示
+    uni.showLoading({
+      title: '文件下载中...',
+      mask: true
+    });
+    
     const res = await uni.downloadFile({
       url: message.fileUrl,
       success: (res) => {
+        uni.hideLoading();
         if (res.statusCode === 200) {
-          uni.openDocument({
-            filePath: res.tempFilePath,
-            success: () => {
-              console.log('打开文档成功')
-            }
-          })
+          // 显示成功提示
+          uni.showToast({
+            title: '下载成功',
+            icon: 'success',
+            duration: 1500
+          });
+          
+          setTimeout(() => {
+            // 尝试打开文件
+            uni.openDocument({
+              filePath: res.tempFilePath,
+              showMenu: true,
+              success: () => {
+                console.log('打开文档成功');
+              },
+              fail: (err) => {
+                console.error('打开文档失败', err);
+                uni.showToast({
+                  title: '无法打开此类型文件',
+                  icon: 'none'
+                });
+              }
+            });
+          }, 500);
+        } else {
+          uni.showToast({
+            title: '下载失败',
+            icon: 'none'
+          });
         }
+      },
+      fail: (err) => {
+        uni.hideLoading();
+        console.error('下载失败:', err);
+        uni.showToast({
+          title: '下载失败',
+          icon: 'none'
+        });
       }
-    })
+    });
   } catch (error) {
+    uni.hideLoading();
+    console.error('文件下载错误:', error);
     uni.showToast({
       title: '下载失败',
       icon: 'none'
-    })
+    });
   }
 }
 
@@ -675,44 +732,57 @@ const decodeFileName = (fileName) => {
 
 // 上传图片
 const uploadImage = async (filePath) => {
-  uploadFile({
-    filePath,
-    type: 'image',
-    token: store.state.token,
-    onSuccess: (file) => {
-      // 拼接完整的图片URL并解码文件名
-      const fullUrl = currentConfig.apiUrl + file.url
-      const decodedFileName = decodeFileName(file.fileName)
-      sendWebSocketMessage(chatId.value, decodedFileName || '图片', 'image', fullUrl)
-    },
-    onError: (error) => {
-      uni.showToast({
-        title: error,
-        icon: 'none'
-      })
+  // 使用新的上传方法
+  uploadChatFile(filePath, 'image', (progress) => {
+    console.log('Upload progress:', progress)
+  }).then(result => {
+    if (result && result.status === 'success') {
+      // 检查response格式，兼容两种数据结构
+      const fileData = result.data?.file || result.data
+      if (fileData) {
+        // 构建完整的图片URL并解码文件名
+        const fileUrl = fileData.url
+        const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
+        const decodedFileName = decodeFileName(fileData.fileName)
+        sendWebSocketMessage(chatId.value, decodedFileName || '图片', 'image', {
+          fileUrl: fullUrl
+        })
+      }
     }
+  }).catch(error => {
+    uni.showToast({
+      title: error.message || '上传失败',
+      icon: 'none'
+    })
   })
 }
 
 // 处理录音完成
 const handleAudioRecorded = (filePath, duration) => {
-  uploadFile({
-    filePath,
-    type: 'audio',
-    token: store.state.token,
-    onSuccess: (file) => {
-      // 拼接完整的音频URL并解码文件名
-      const fullUrl = currentConfig.apiUrl + file.url
-      const decodedFileName = decodeFileName(file.fileName)
-      // 发送音频消息，duration 已经是毫秒单位
-      sendWebSocketMessage(chatId.value, decodedFileName || '语音消息', 'audio', fullUrl, duration)
-    },
-    onError: (error) => {
-      uni.showToast({
-        title: error,
-        icon: 'none'
-      })
+  // 使用新的上传方法
+  uploadChatFile(filePath, 'audio', (progress) => {
+    console.log('Upload progress:', progress)
+  }).then(result => {
+    if (result && result.status === 'success') {
+      // 检查response格式，兼容两种数据结构
+      const fileData = result.data?.file || result.data
+      if (fileData) {
+        // 构建完整的音频URL并解码文件名
+        const fileUrl = fileData.url
+        const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
+        const decodedFileName = decodeFileName(fileData.fileName)
+        // 发送音频消息，duration 已经是毫秒单位
+        sendWebSocketMessage(chatId.value, decodedFileName || '语音消息', 'audio', {
+          fileUrl: fullUrl,
+          duration: duration
+        })
+      }
     }
+  }).catch(error => {
+    uni.showToast({
+      title: error.message || '上传失败',
+      icon: 'none'
+    })
   })
 }
 
@@ -725,23 +795,41 @@ const chooseFile = () => {
       const tempFilePath = res.tempFilePaths[0]
       const fileInfo = res.tempFiles[0]
       
-      uploadFile({
-        filePath: tempFilePath,
-        type: 'file',
-        token: store.state.token,
-        onSuccess: (file) => {
-          // 拼接完整的文件URL并解码文件名
-          const fullUrl = currentConfig.apiUrl + file.url
-          const decodedFileName = decodeFileName(file.fileName)
-          sendWebSocketMessage(chatId.value, decodedFileName || '文件消息', 'file', fullUrl, fileInfo.size)
-        },
-        onError: (error) => {
-          uni.showToast({
-            title: error,
-            icon: 'none'
-          })
+      // 使用新的上传方法
+      uploadChatFile(tempFilePath, 'file', (progress) => {
+        console.log('Upload progress:', progress)
+      }).then(result => {
+        if (result && result.status === 'success') {
+          // 检查response格式，兼容两种数据结构
+          const fileData = result.data?.file || result.data
+          if (fileData) {
+            // 构建完整的文件URL并解码文件名
+            const fileUrl = fileData.url
+            const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
+            const decodedFileName = decodeFileName(fileData.fileName)
+            
+            // 发送消息，包括额外字段
+            sendWebSocketMessage(
+              chatId.value, 
+              decodedFileName || '文件消息', 
+              'file', 
+              {
+                fileUrl: fullUrl,
+                fileSize: fileInfo.size || 0,
+                fileType: fileData.fileType || '',
+                fileExt: fileData.fileName ? fileData.fileName.split('.').pop() : '',
+                originalFileName: fileData.fileName || decodedFileName || '文件消息'
+              }
+            )
+          }
         }
+      }).catch(error => {
+        uni.showToast({
+          title: error.message || '上传失败',
+          icon: 'none'
+        })
       })
+      
       showPopup.value = false
     }
   })
@@ -912,7 +1000,7 @@ const startCall = (targetUserId, callType = 1) => {
     if (res.code === 0) {
       // 仿微信发送简约的通话消息
       const callTypeText = callType === 1 ? '语音通话' : '视频通话';
-      sendWebSocketMessage(chatId.value, callTypeText, 'call');
+      sendWebSocketMessage(chatId.value, callTypeText, 'call', {});
     } else {
       console.error('[TUICallKit] 发起通话失败:', res.msg, '用户ID:', userId);
       uni.showToast({
@@ -935,6 +1023,73 @@ const removeCallEventListeners = () => {
   if (callMessageTimer) {
     clearTimeout(callMessageTimer);
     callMessageTimer = null;
+  }
+}
+
+// 获取文件图标类
+const getFileIconClass = (fileName) => {
+  const extension = fileName.split('.').pop().toLowerCase();
+  switch (extension) {
+    case 'doc':
+    case 'docx':
+      return 'doc';
+    case 'pdf':
+      return 'pdf';
+    case 'txt':
+      return 'txt';
+    case 'ppt':
+    case 'pptx':
+      return 'ppt';
+    case 'xls':
+    case 'xlsx':
+      return 'xls';
+    case 'jpg':
+    case 'jpeg':
+      return 'jpg';
+    case 'png':
+      return 'png';
+    case 'gif':
+      return 'gif';
+    case 'mp4':
+    case 'mp3':
+      return 'video';
+    default:
+      return 'file';
+  }
+}
+
+// 获取文件图标名称
+const getFileIconName = (fileName) => {
+  const extension = fileName.split('.').pop().toLowerCase();
+  switch (extension) {
+    case 'doc':
+    case 'docx':
+      return 'file-text';
+    case 'pdf':
+      return 'file-text';
+    case 'txt':
+      return 'file-text';
+    case 'ppt':
+    case 'pptx':
+      return 'file-text';
+    case 'xls':
+    case 'xlsx':
+      return 'file-text';
+    case 'jpg':
+    case 'jpeg':
+    case 'png':
+    case 'gif':
+      return 'photo';
+    case 'mp4':
+      return 'video';
+    case 'mp3':
+    case 'wav':
+      return 'volume';
+    case 'zip':
+    case 'rar':
+      return 'folder';
+    default:
+      return 'file-text';
   }
 }
 
@@ -1024,7 +1179,7 @@ const removeCallEventListeners = () => {
   align-items: flex-start;
   gap: 12rpx;
   max-width: 70%;
-  width: fit-content;
+  position: relative;
 }
 
 .message-bubble.self-message {
@@ -1042,8 +1197,9 @@ const removeCallEventListeners = () => {
 .message-content {
   display: flex;
   flex-direction: column;
-  min-width: 80rpx; /* 设置最小宽度 */
-  max-width: 100%; /* 允许内容自适应 */
+  min-width: 80rpx;
+  max-width: calc(100% - 90rpx); /* Account for avatar width + gap */
+  position: relative;
 }
 
 .sender-name {
@@ -1111,13 +1267,22 @@ const removeCallEventListeners = () => {
   font-size: 24rpx;
 }
 
+/* 图片容器样式 */
+.image-container {
+  padding: 8rpx;
+  background-color: transparent;
+}
+
 /* 图片消息样式 */
 .message-image {
-  max-width: 100%;
-  width: auto;
+  max-width: 240rpx;
+  min-width: 200rpx;
+  width: 240rpx;
   height: auto;
   border-radius: 8rpx;
   background-color: #f5f5f5;
+  display: block;
+  object-fit: contain;
 }
 
 /* 音频消息样式 */
@@ -1179,55 +1344,121 @@ const removeCallEventListeners = () => {
 .file-message {
   display: flex;
   align-items: center;
-  padding: 20rpx;
+  padding: 16rpx;
   background-color: #ffffff;
-  border-radius: 8rpx;
+  border-radius: 12rpx;
   width: fit-content;
-  max-width: 100%;
-  min-width: 200rpx;
+  max-width: calc(100% - 100rpx); /* Adjusted to prevent avatar overlap */
+  min-width: 240rpx;
+  box-shadow: 0 2rpx 6rpx rgba(0,0,0,0.05);
+  transition: all 0.2s ease;
+  position: relative;
 }
 
-.self-message .file-message {
-  background-color: #1989fa;
-  border-radius: 4rpx 16rpx 16rpx 16rpx;
-  margin-right: 16rpx;
+.message-mine .message-bubble .message-content .file-message,
+.message-other .message-bubble .message-content .file-message {
+  margin: 0;
+  max-width: 100%;
+  width: initial;
+}
+
+.file-message:active {
+  opacity: 0.9;
+  transform: scale(0.98);
+}
+
+.self-file-message {
+  background-color: #e5f1ff;
+  border: 1px solid rgba(25, 137, 250, 0.2);
+}
+
+.message-mine .self-file-message {
+  background-color: #e5f1ff;
+  border-radius: 12rpx 12rpx 4rpx 12rpx;
+  margin-left: 16rpx;
 }
 
 .message-other .file-message {
   background-color: #ffffff;
-  border-radius: 16rpx 4rpx 16rpx 16rpx;
-  margin-left: 16rpx;
+  border-radius: 12rpx 12rpx 12rpx 4rpx;
+  margin-right: 16rpx;
+  border: 1px solid rgba(0,0,0,0.1);
 }
 
 .file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60rpx;
+  height: 60rpx;
+  border-radius: 8rpx;
   margin-right: 16rpx;
+  background-color: #f5f5f5;
 }
+
+.file-icon.doc, .file-icon.docx { background-color: #4285f4; }
+.file-icon.pdf { background-color: #ea4335; }
+.file-icon.txt { background-color: #34a853; }
+.file-icon.ppt, .file-icon.pptx { background-color: #fbbc05; }
+.file-icon.xls, .file-icon.xlsx { background-color: #34a853; }
+.file-icon.jpg, .file-icon.jpeg, .file-icon.png, .file-icon.gif { background-color: #9c27b0; }
+.file-icon.mp4, .file-icon.mp3, .file-icon.wav { background-color: #ff5722; }
+.file-icon.zip, .file-icon.rar { background-color: #795548; }
 
 .file-info {
   flex: 1;
   overflow: hidden;
+  padding-right: 8rpx;
 }
 
 .file-name {
   font-size: 28rpx;
-  color: #333;
-  margin-bottom: 4rpx;
+  color: #6b6b6b !important;
+  margin-bottom: 6rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
+}
+
+.self-file-text {
+  color: #1989fa;
 }
 
 .file-size {
   font-size: 24rpx;
   color: #999;
+  display: block;
+}
+
+.download-btn-wrapper {
+  margin-left: 12rpx;
 }
 
 .download-btn {
-  font-size: 24rpx;
-  color: #ffffff;
-  background: none;
-  border: none;
-  padding: 0 16rpx;
+  width: 50rpx;
+  height: 50rpx;
+  border-radius: 25rpx;
+  background-color: #1989fa;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 2rpx 6rpx rgba(25, 137, 250, 0.3);
+  transition: all 0.3s;
+}
+
+.download-btn:active {
+  transform: scale(0.9);
+  box-shadow: 0 1rpx 3rpx rgba(25, 137, 250, 0.2);
+}
+
+.self-download-btn {
+  background-color: #ffffff;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.1);
+}
+
+.self-download-btn:active {
+  box-shadow: 0 1rpx 3rpx rgba(0, 0, 0, 0.05);
 }
 
 .call-record {

@@ -17,13 +17,13 @@
     
     <!-- 功能入口 -->
     <view class="feature-section">
-      <!-- <view class="feature-item" @click="goToNewFriends">
+      <view class="feature-item" @click="goToNewFriends">
         <view class="feature-icon new-friend-icon">
           <u-icon name="account-fill" size="28" color="#fff"></u-icon>
         </view>
         <text class="feature-name">新朋友</text>
-        <view v-if="pendingRequests > 0" class="badge">{{ pendingRequests }}</view>
-      </view> -->
+        <view v-if="pendingRequestsCount > 0" class="badge">{{ pendingRequestsCount }}</view>
+      </view>
       
       <view class="feature-item" @click="goToAddFriend">
         <view class="feature-icon add-friend-icon">
@@ -99,7 +99,7 @@
 
 <script setup>
 import { onShow } from '@dcloudio/uni-app'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 
 const store = useStore()
@@ -110,6 +110,7 @@ const pendingRequests = ref(0)
 
 // 获取好友列表
 const friends = computed(() => store.getters.friendsList)
+const pendingRequestsCount = computed(() => store.getters.pendingFriendRequestsCount)
 
 // 索引列表
 const indexList = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '#']
@@ -157,7 +158,33 @@ const getFirstLetter = (name) => {
   return '#'
 }
 
-// 页面加载时获取好友列表
+// 监听好友请求数量变化，更新角标
+watch(() => pendingRequestsCount.value, (newCount) => {
+  updateTabBarBadge(newCount)
+})
+
+// 更新Tab角标
+const updateTabBarBadge = (count) => {
+  if (count > 0) {
+    // 设置角标
+    uni.setTabBarBadge({
+      index: 1, // 通讯录的索引
+      text: count.toString()
+    }).catch(err => {
+      console.log('Failed to set badge:', err)
+    })
+  } else {
+    // 移除角标
+    uni.removeTabBarBadge({
+      index: 1
+    }).catch(err => {
+      // 忽略可能的错误（如果角标不存在）
+      console.log('No badge to remove')
+    })
+  }
+}
+
+// 页面加载时获取好友列表和好友请求
 onMounted(async () => {
   // 检查是否已登录
   if (!store.getters.isAuthenticated) {
@@ -167,11 +194,19 @@ onMounted(async () => {
     return
   }
   
-  // await fetchFriends()
-  // pendingRequests.value = store.state.friendRequests.length
+  // 获取好友请求
+  await fetchFriendRequests()
+  
+  // 初始化角标
+  updateTabBarBadge(pendingRequestsCount.value)
 })
+
 onShow(async () => {
   await fetchFriends()
+  await fetchFriendRequests()
+  
+  // 更新角标
+  updateTabBarBadge(pendingRequestsCount.value)
 })
 
 // 获取好友列表
@@ -187,6 +222,17 @@ const fetchFriends = async () => {
     })
   } finally {
     isLoading.value = false
+  }
+}
+
+// 获取好友请求
+const fetchFriendRequests = async () => {
+  try {
+    await store.dispatch('fetchFriendRequests')
+    // 更新通讯录Tab的角标
+    updateTabBarBadge(pendingRequestsCount.value)
+  } catch (error) {
+    console.error('Failed to fetch friend requests:', error)
   }
 }
 

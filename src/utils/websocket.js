@@ -257,14 +257,13 @@ class WebSocketService {
   }
 
   // 发送聊天消息
-  sendChatMessage(chatId, content, messageType = 'text', fileUrl = '', duration = 0) {
+  sendChatMessage(chatId, content, messageType = 'text', extraFields = {}) {
     this.sendMessage('send-message', {
       chatId,
       content,
       messageType,
-      fileUrl,
-      duration,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ...extraFields  // 包含 fileUrl, duration 和其他字段
     });
   }
 
@@ -283,8 +282,6 @@ class WebSocketService {
     this.sendMessage('mark-read', { messageId });
   }
 
-
-
   // 关闭连接
   close() {
     this.stopHeartbeat();
@@ -298,6 +295,19 @@ class WebSocketService {
       this.isConnected = false;
     }
   }
+
+  // 发送好友请求通知
+  sendFriendRequestNotification(targetUserId) {
+    this.sendMessage('friend-request', { targetUserId });
+  }
+
+  // 发送好友请求响应通知
+  sendFriendRequestResponseNotification(senderId, response) {
+    this.sendMessage('friend-request-response', { senderId, response });
+  }
+
+  // 以下方法已移除，现在通过API接口实现
+  // 只保留接收服务器推送的事件功能
 }
 
 // 创建单例实例

@@ -7,7 +7,7 @@
     
     <!-- 空状态 -->
     <view v-if="friendRequests.length === 0 && !isLoading" class="empty-state">
-      <image class="empty-icon" src="/static/empty-friends.png" mode="aspectFit"></image>
+      <u-icon name="info-circle" size="80" color="#c0c4cc"></u-icon>
       <text class="empty-text">暂无好友请求</text>
     </view>
     
@@ -20,36 +20,43 @@
       :refresher-triggered="isRefreshing"
       @refresherrefresh="onRefresh"
     >
-      <view 
-        v-for="request in friendRequests" 
-        :key="request._id"
-        class="request-item"
-      >
-        <view class="user-info">
-          <image class="avatar" :src="request.sender.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
-          <view class="info-content">
-            <text class="username">{{request.sender.username}}</text>
-            <text class="email">{{request.sender.email}}</text>
+      <view v-if="isLoading" class="loading-state">
+        <u-loading-icon mode="circle" size="40"></u-loading-icon>
+        <text class="loading-text">加载中...</text>
+      </view>
+      
+      <view v-else-if="friendRequests.length === 0" class="empty-state">
+        <u-icon name="info-circle" size="80" color="#c0c4cc"></u-icon>
+        <text class="empty-text">暂无好友请求</text>
+      </view>
+      
+      <view v-else>
+        <view 
+          v-for="request in friendRequests" 
+          :key="request._id"
+          class="request-item"
+        >
+          <view class="user-info">
+            <image class="avatar" :src="request.sender.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
+            <view class="info-content">
+              <text class="username">{{request.sender.username}}</text>
+              <text class="email">{{request.sender.email}}</text>
+              <text class="time">{{ formatTime(request.createdAt) }}</text>
+            </view>
           </view>
-        </view>
-        
-        <view class="action-buttons">
-          <view 
-            v-if="request.status === 'pending'" 
-            class="action-group"
-          >
+          
+          <view class="action-buttons">
             <button 
               class="action-btn reject" 
-              @click="handleRejectRequest(request._id)"
+              @click="handleReject(request._id)"
+              :disabled="isProcessing[request._id]"
             >拒绝</button>
             <button 
               class="action-btn accept" 
-              @click="handleAcceptRequest(request._id)"
+              @click="handleAccept(request._id)"
+              :disabled="isProcessing[request._id]"
             >接受</button>
           </view>
-          
-          <text v-else-if="request.status === 'accepted'" class="status-text accepted">已添加</text>
-          <text v-else-if="request.status === 'rejected'" class="status-text rejected">已拒绝</text>
         </view>
       </view>
     </scroll-view>
@@ -58,16 +65,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { useStore } from 'vuex'
 
 const store = useStore()
 const isLoading = ref(true)
 const isRefreshing = ref(false)
+const isProcessing = ref({}) // 跟踪每个请求的处理状态
 
 // 获取好友请求列表
-const friendRequests = computed(() => store.state.friendRequests)
+const friendRequests = computed(() => store.getters.pendingFriendRequests)
 
-// 页面加载完成
+// 页面加载时获取好友请求
 onMounted(async () => {
   // 检查是否已登录
   if (!store.getters.isAuthenticated) {
@@ -76,57 +85,155 @@ onMounted(async () => {
     })
     return
   }
+  
+  await fetchFriendRequests()
 })
+
+onShow(async () => {
+  await fetchFriendRequests()
+})
+
+// 获取好友请求
+const fetchFriendRequests = async () => {
+  isLoading.value = true
+  try {
+    await store.dispatch('fetchFriendRequests')
+  } catch (error) {
+    console.error('Failed to fetch friend requests:', error)
+    uni.showToast({
+      title: '获取好友请求失败',
+      icon: 'none'
+    })
+  } finally {
+    isLoading.value = false
+  }
+}
 
 // 下拉刷新
 const onRefresh = async () => {
   isRefreshing.value = true
   try {
-    // 这里可以添加其他刷新逻辑
+    await fetchFriendRequests()
   } finally {
     isRefreshing.value = false
   }
 }
 
 // 接受好友请求
-const handleAcceptRequest = async (requestId) => {
+const handleAccept = async (requestId) => {
+  // 设置处理状态
+  isProcessing.value = { ...isProcessing.value, [requestId]: true }
+  
   try {
-    await store.dispatch('respondToFriendRequest', {
-      requestId,
-      accept: true
-    })
+    // 通过API接受好友请求
+    const response = await store.dispatch('acceptFriendRequest', requestId)
     
-    uni.showToast({
-      title: '已添加好友',
-      icon: 'success'
-    })
+    if (response.success) {
+      // 获取请求信息
+      const request = friendRequests.value.find(req => req._id === requestId)
+      if (request && request.sender) {
+        // 发送WebSocket通知
+        store.dispatch('websocket/sendFriendRequestResponseNotification', {
+          senderId: request.sender._id,
+          response: 'accepted'
+        })
+      }
+      
+      uni.showToast({
+        title: response.message || '已添加为好友',
+        icon: 'success'
+      })
+      
+      // 更新好友请求数量，以便更新角标
+      await store.dispatch('fetchFriendRequests')
+    } else {
+      uni.showToast({
+        title: response.message || '接受好友请求失败',
+        icon: 'none'
+      })
+    }
   } catch (error) {
     console.error('Failed to accept friend request:', error)
     uni.showToast({
-      title: '操作失败',
+      title: '接受好友请求失败',
       icon: 'none'
     })
+  } finally {
+    // 清除处理状态
+    const newProcessing = { ...isProcessing.value }
+    delete newProcessing[requestId]
+    isProcessing.value = newProcessing
   }
 }
 
 // 拒绝好友请求
-const handleRejectRequest = async (requestId) => {
+const handleReject = async (requestId) => {
+  // 设置处理状态
+  isProcessing.value = { ...isProcessing.value, [requestId]: true }
+  
   try {
-    await store.dispatch('respondToFriendRequest', {
-      requestId,
-      accept: false
-    })
+    // 通过API拒绝好友请求
+    const response = await store.dispatch('rejectFriendRequest', requestId)
     
-    uni.showToast({
-      title: '已拒绝请求',
-      icon: 'success'
-    })
+    if (response.success) {
+      // 获取请求信息
+      const request = friendRequests.value.find(req => req._id === requestId)
+      if (request && request.sender) {
+        // 发送WebSocket通知
+        store.dispatch('websocket/sendFriendRequestResponseNotification', {
+          senderId: request.sender._id,
+          response: 'rejected'
+        })
+      }
+      
+      uni.showToast({
+        title: response.message || '已拒绝好友请求',
+        icon: 'success'
+      })
+      
+      // 更新好友请求数量，以便更新角标
+      await store.dispatch('fetchFriendRequests')
+    } else {
+      uni.showToast({
+        title: response.message || '拒绝好友请求失败',
+        icon: 'none'
+      })
+    }
   } catch (error) {
     console.error('Failed to reject friend request:', error)
     uni.showToast({
-      title: '操作失败',
+      title: '拒绝好友请求失败',
       icon: 'none'
     })
+  } finally {
+    // 清除处理状态
+    const newProcessing = { ...isProcessing.value }
+    delete newProcessing[requestId]
+    isProcessing.value = newProcessing
+  }
+}
+
+// 格式化时间
+const formatTime = (timestamp) => {
+  if (!timestamp) return ''
+  
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diff = (now - date) / 1000 // 秒数
+  
+  if (diff < 60) {
+    return '刚刚'
+  } else if (diff < 3600) {
+    return `${Math.floor(diff / 60)}分钟前`
+  } else if (diff < 86400) {
+    return `${Math.floor(diff / 3600)}小时前`
+  } else if (diff < 604800) {
+    return `${Math.floor(diff / 86400)}天前`
+  } else {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
   }
 }
 </script>
@@ -141,36 +248,47 @@ const handleRejectRequest = async (requestId) => {
 
 .tips-bar {
   padding: 20rpx 30rpx;
-  background-color: rgba(var(--primary-rgb), 0.1);
+  background-color: #f0f9ff;
+  border-bottom: 1rpx solid #e5e5e5;
 }
 
 .tips-text {
   font-size: 28rpx;
-  color: var(--primary-color);
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 60vh;
-}
-
-.empty-icon {
-  width: 200rpx;
-  height: 200rpx;
-  margin-bottom: 30rpx;
-  opacity: 0.5;
-}
-
-.empty-text {
-  font-size: 30rpx;
-  color: #999;
+  color: #2979ff;
+  font-weight: 500;
 }
 
 .request-list {
   flex: 1;
+}
+
+.empty-state,
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 80%;
+}
+
+/* Using uview-plus icon component */
+
+.empty-text {
+  font-size: 30rpx;
+  color: #999;
+  margin-top: 20rpx;
+}
+
+.loading-state {
+  padding: 60rpx 0;
+}
+
+/* Using uview-plus loading component */
+
+.loading-text {
+  font-size: 30rpx;
+  color: #999;
+  margin-top: 20rpx;
 }
 
 .request-item {
@@ -179,25 +297,31 @@ const handleRejectRequest = async (requestId) => {
   align-items: center;
   padding: 30rpx;
   background-color: #ffffff;
+  border-bottom: 1rpx solid #f0f0f0;
   margin-bottom: 2rpx;
 }
 
 .user-info {
   display: flex;
   align-items: center;
+  flex: 1;
 }
 
 .avatar {
   width: 100rpx;
   height: 100rpx;
   border-radius: 12rpx;
-  background-color: #f0f0f0;
   margin-right: 20rpx;
+  background-color: #f0f0f0;
+  object-fit: cover;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.05);
 }
 
 .info-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
 .username {
@@ -205,19 +329,26 @@ const handleRejectRequest = async (requestId) => {
   color: #333;
   margin-bottom: 8rpx;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .email {
   font-size: 26rpx;
   color: #999;
+  margin-bottom: 8rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.time {
+  font-size: 24rpx;
+  color: #c0c4cc;
 }
 
 .action-buttons {
-  display: flex;
-  align-items: center;
-}
-
-.action-group {
   display: flex;
 }
 
@@ -231,27 +362,23 @@ const handleRejectRequest = async (requestId) => {
   font-size: 28rpx;
   margin-left: 20rpx;
   border: none;
+  padding: 0 30rpx;
+  font-weight: 500;
 }
 
 .action-btn.reject {
-  background-color: #f5f5f5;
+  background-color: #f8f8f8;
   color: #666;
+  border: 1rpx solid #e5e5e5;
 }
 
 .action-btn.accept {
   background-color: var(--primary-color);
   color: #ffffff;
+  box-shadow: 0 4rpx 10rpx rgba(41, 121, 255, 0.2);
 }
 
-.status-text {
-  font-size: 28rpx;
-}
-
-.status-text.accepted {
-  color: var(--primary-color);
-}
-
-.status-text.rejected {
-  color: #999;
+.action-btn:disabled {
+  opacity: 0.6;
 }
 </style>
