@@ -5,7 +5,7 @@ const state = {
   onlineUsers: [],
   currentUser: null,
   typingUsers: new Map(),
-  unreadMessages: new Map(),
+  // Remove unreadMessages from websocket module state - use only the main store's counter
   latestFriendRequest: null
 };
 
@@ -30,31 +30,28 @@ const mutations = {
       state.typingUsers.get(chatId).delete(user);
     }
   },
-  ADD_UNREAD_MESSAGE(state, { chatId, messageId }) {
-    if (!state.unreadMessages.has(chatId)) {
-      state.unreadMessages.set(chatId, new Set());
-    }
-    state.unreadMessages.get(chatId).add(messageId);
-  },
-  CLEAR_UNREAD_MESSAGES(state, chatId) {
-    state.unreadMessages.delete(chatId);
-  },
-  ADD_MESSAGE(state, { chatId, message }) {
+  // Removed ADD_UNREAD_MESSAGE and CLEAR_UNREAD_MESSAGES mutations
+  // Now using only the main store's unread counter
+    ADD_MESSAGE(state, { chatId, message }) {
     // Implementation of ADD_MESSAGE mutation
   },
-  INCREMENT_UNREAD(state, { chatId }) {
-    if (!state.unreadMessages.has(chatId)) {
-      state.unreadMessages.set(chatId, new Set());
-    }
-    state.unreadMessages.get(chatId).size++;
-  },
+  // Removed INCREMENT_UNREAD mutation - using only the main store's version
   SET_LATEST_FRIEND_REQUEST(state, request) {
     state.latestFriendRequest = request;
   }
 };
 
 const actions = {
-  initWebSocket({ commit, dispatch }, token) {
+  initWebSocket({ commit, dispatch, rootState }, token) {
+    // 先清除可能存在的旧处理器
+    websocketService.off('new-message');
+    websocketService.off('typing');
+    websocketService.off('stop-typing');
+    websocketService.off('message-read');
+    websocketService.off('friend-request-notification');
+    websocketService.off('friend-request-accepted-notification');
+    websocketService.off('friend-request-rejected-notification');
+    
     websocketService.init(token);
 
     // 注册消息处理器
@@ -70,7 +67,7 @@ const actions = {
     websocketService.on('new-message', (message) => {
       // 如果消息不是当前用户发送的，标记为未读
       if (message.sender._id !== state.currentUser._id) {
-        // 增加未读消息计数
+        // 增加未读消息计数 - 只在主store中增加，防止重复计数
         commit('INCREMENT_UNREAD', {
           chatId: message.chat._id
         }, { root: true });
@@ -116,6 +113,15 @@ const actions = {
       
       // 更新好友请求列表 - 通过API获取最新的好友请求列表
       dispatch('fetchFriendRequests', null, { root: true });
+      
+      // 立即更新通讯录Tab角标
+      const currentCount = rootState.friendRequests.length + 1; // +1 因为新请求可能还未加载
+      uni.setTabBarBadge({
+        index: 1, // 通讯录的索引
+        text: currentCount.toString()
+      }).catch(err => {
+        console.log('Failed to set contacts badge:', err)
+      });
     });
 
     // 好友请求被接受通知
@@ -156,7 +162,8 @@ const actions = {
 
   markMessageAsRead({ state, commit }, { chatId, messageId }) {
     websocketService.markMessageAsRead(messageId);
-    commit('CLEAR_UNREAD_MESSAGES', chatId);
+    // Use the main store's CLEAR_UNREAD mutation
+    commit('CLEAR_UNREAD', chatId, { root: true });
   },
 
   closeConnection({ commit }) {
@@ -192,9 +199,7 @@ const getters = {
   getTypingUsers: state => chatId => {
     return state.typingUsers.get(chatId) || new Set();
   },
-  getUnreadMessageCount: state => chatId => {
-    return state.unreadMessages.get(chatId)?.size || 0;
-  },
+
   latestFriendRequest: state => state.latestFriendRequest
 };
 

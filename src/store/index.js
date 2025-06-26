@@ -48,7 +48,8 @@ const store = createStore({
     SET_CURRENT_CHAT(state, chatId) {
       state.currentChat = chatId
       // 设置当前聊天时，清除该聊天的未读消息计数
-      if (state.unreadMessages[chatId]) {
+      if (chatId) {
+        // 无论是否有未读消息，都设置为0
         state.unreadMessages[chatId] = 0
         
         // 更新聊天列表中的未读计数
@@ -96,35 +97,49 @@ const store = createStore({
       // 更新聊天列表中的未读计数
       const chatIndex = state.chats.findIndex(c => c._id === chatId)
       if (chatIndex !== -1) {
-        // 初始化未读计数属性
-        if (!state.chats[chatIndex].unreadCount) {
+        // 确保未读计数属性存在并正确初始化
+        if (state.chats[chatIndex].unreadCount === undefined) {
           state.chats[chatIndex].unreadCount = 0
         }
+        // 更新未读计数
         state.chats[chatIndex].unreadCount = state.unreadMessages[chatId]
       }
     },
     // 清除未读消息计数
     CLEAR_UNREAD(state, chatId) {
+      // 确保初始化为0，而不是undefined
       state.unreadMessages[chatId] = 0
       
       // 更新聊天列表中的未读计数
       const chatIndex = state.chats.findIndex(c => c._id === chatId)
       if (chatIndex !== -1) {
+        // 确保未读计数属性存在并设置为0
         state.chats[chatIndex].unreadCount = 0
       }
     },
     // 好友相关
     SET_FRIENDS(state, friends) {
-      state.friends = Array.isArray(friends) ? friends : []
+      state.friends = friends
     },
-    ADD_FRIEND(state, friend) {
-      const exists = state.friends.find(f => f._id === friend._id)
-      if (!exists) {
-        state.friends.push(friend)
+    ADD_FRIEND(state, friendData) {
+      // 检查是否已存在该好友
+      const index = state.friends.findIndex(f => f.user._id === friendData.user._id)
+      if (index === -1) {
+        // 不存在则添加
+        state.friends.push(friendData)
+      } else {
+        // 存在则更新
+        state.friends[index] = friendData
       }
     },
     REMOVE_FRIEND(state, friendId) {
-      state.friends = state.friends.filter(f => f._id !== friendId)
+      state.friends = state.friends.filter(f => f.user._id !== friendId)
+    },
+    UPDATE_FRIEND_REMARK(state, { friendId, remark }) {
+      const friendIndex = state.friends.findIndex(f => f.user._id === friendId)
+      if (friendIndex !== -1) {
+        state.friends[friendIndex].remark = remark
+      }
     },
     // 好友请求相关
     SET_FRIEND_REQUESTS(state, requests) {
@@ -325,8 +340,8 @@ const store = createStore({
 
     async fetchFriends({ commit }) {
       try {
-        const friends = await api.users.getFriends()
-        commit('SET_FRIENDS', friends.friends)
+        const response = await api.users.getFriends()
+        commit('SET_FRIENDS', response.friends)
         return { success: true }
       } catch (error) {
         return { success: false }
@@ -407,11 +422,11 @@ const store = createStore({
 
     async removeFriend({ commit }, friendId) {
       try {
-        await api.users.removeFriend(friendId)
+        const response = await api.users.removeFriend(friendId)
         commit('REMOVE_FRIEND', friendId)
-        return { success: true }
+        return { success: true, user: response.user }
       } catch (error) {
-        return { success: false }
+        return { success: false, message: error.message || '删除好友失败' }
       }
     },
 
@@ -423,6 +438,16 @@ const store = createStore({
         return { success: true }
       } catch (error) {
         throw new Error(error.response?.data?.message || '更新失败')
+      }
+    },
+
+    async updateFriendRemark({ commit }, { friendId, remark }) {
+      try {
+        const response = await api.users.updateFriendRemark(friendId, remark)
+        commit('UPDATE_FRIEND_REMARK', { friendId, remark })
+        return { success: true, friendData: response.friendData }
+      } catch (error) {
+        return { success: false, message: error.message || '更新好友备注失败' }
       }
     }
   },

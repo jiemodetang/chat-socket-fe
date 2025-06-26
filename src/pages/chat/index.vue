@@ -1,20 +1,28 @@
 <template>
-  <view class="chat-container" >
-   
-
+  <view class="chat-container">
+    <!-- 顶部操作栏 -->
+    <view class="action-bar">
+      <view class="more-btn" @click="showMoreOptions">
+        <u-icon name="more-dot-fill" size="24" color="#333"></u-icon>
+      </view>
+    </view>
+    
     <!-- 聊天消息列表 -->
     <scroll-view 
+      id="messageScrollView"
+      ref="scrollViewRef"
       scroll-y 
       class="message-list" 
-      :scroll-top="scrollTop" 
-      :scroll-into-view="scrollIntoView"
+      :scroll-into-view="toView"
       :scroll-with-animation="true"
-      :enhanced="true"
+      :scroll-anchoring="true"
+      :refresher-enabled="false"
       :show-scrollbar="false"
+      :enhanced="true"
       :bounces="false"
       @scroll="handleScroll"
+      @scrolltolower="onScrollToLower"
     >
-   
       <view class="message-wrapper">
         <view v-if="messages.length === 0" class="empty-state">
           <text class="empty-text">暂无消息，开始聊天吧</text>
@@ -58,7 +66,7 @@
                     <view v-else-if="message.messageType === 'image'" class="image-container">
                       <image :src="message.fileUrl" 
                         mode="widthFix" class="message-image" @click="previewImage(message.fileUrl)"
-                        @load="handleImageLoad"></image>
+                        @load="handleImageLoad" :lazy-load="false"></image>
                     </view>
 
                     <!-- 音频消息 -->
@@ -104,6 +112,8 @@
               </view>
             </view>
           </template>
+          <!-- 占位，防止最后一条被输入框遮挡 -->
+          <view class="message-placeholder" id="message-bottom"></view>
         </view>
       </view>
     </scroll-view>
@@ -181,23 +191,92 @@
       </view>
     </u-popup>
 
+    <!-- 页面底部隐藏 xe-upload 组件 -->
+    <XeUpload ref="xeUploadRef" :options="uploadOptions" @callback="handleUploadCallback" style="display:none" />
 
+    <!-- 更多选项弹出菜单 -->
+    <u-popup :show="showMorePopup" mode="bottom" @close="showMorePopup = false" :safe-area-inset-bottom="true">
+      <view class="popup-content">
+        <view class="popup-list">
+          <view class="popup-item" @click="handleAddRemark">
+            <text class="popup-item-text">设置备注</text>
+          </view>
+          <view class="popup-item" v-if="!isGroupChat" @click="handleDeleteFriend">
+            <text class="popup-item-text danger">删除好友</text>
+          </view>
+          <view class="popup-item" v-else @click="handleExitGroup">
+            <text class="popup-item-text danger">退出群聊</text>
+          </view>
+        </view>
+        <view class="popup-cancel" @click="showMorePopup = false">
+          <text>取消</text>
+        </view>
+      </view>
+    </u-popup>
+
+    <!-- 自定义备注弹窗 -->
+    <u-popup :show="showRemarkPopup" mode="bottom" @close="showRemarkPopup = false" :safe-area-inset-bottom="true">
+      <view class="popup-content remark-popup">
+        <view class="popup-header">
+          <view class="header-left" @click="showRemarkPopup = false">
+            <text class="cancel-text">取消</text>
+          </view>
+          <text class="popup-title">设置备注</text>
+          <view class="header-right" @click="saveRemark">
+            <text class="save-text" :class="{ 'save-active': remarkText.trim().length > 0 }">保存</text>
+          </view>
+        </view>
+        <view class="popup-body">
+          <view class="input-container">
+            <view class="input-label">备注名</view>
+            <view class="input-wrapper">
+              <textarea 
+                v-model="remarkText" 
+                placeholder="请输入备注名" 
+                :adjust-position="false"
+                :cursor-spacing="20" 
+                :show-confirm-bar="false" 
+                :auto-height="true"
+                :maxlength="30" 
+                class="remark-input"
+                @input="handleRemarkInput"
+              ></textarea>
+            </view>
+            <view class="remark-tips">
+              <text>好的备注让你更容易记住和区分好友</text>
+              <text class="remark-count" :class="{ 'count-warning': remarkText.length > 25 }">{{ remarkText.length }}/30</text>
+            </view>
+          </view>
+          
+          <view class="preview-section">
+            <view class="preview-title">预览效果</view>
+            <view class="preview-card">
+              <image class="preview-avatar" :src="remarkTarget?.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
+              <view class="preview-info">
+                <text class="preview-name">{{ remarkText || remarkTarget?.username || '未设置' }}</text>
+                <text class="preview-original">昵称：{{ remarkTarget?.username || '' }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </u-popup>
   </view>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { currentConfig } from '../../config'
 import { useWebSocket } from '@/composables/useWebSocket'
-import {  uploadChatFile } from '@/utils/upload'
+import { uploadChatFile } from '@/utils/upload'
 import { openDocument } from '@/utils/fileUpload'
 import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
 import VoiceRecorder from '@/components/VoiceRecorder.vue'
-import AudioMessage from '@/components/AudioMessage.vue'
-import { genTestUserSig } from '@/debug/GenerateTestUserSig.js'
+
 import { loginTUICallKit, startCall as tuiStartCall, onCallEvent, offCallEvent, formatCallDuration } from '@/utils/tuiCallKit'
+import XeUpload from '@/components/FileUploader.vue'
 
 // 导入TUICallKit插件
 let TUICallKit;
@@ -221,23 +300,30 @@ const {
   onlineUsers,
   currentUser: wsCurrentUser,
   getTypingUsers,
-  getUnreadMessageCount
 } = useWebSocket()
 
 const chatId = ref('')
 const messageText = ref('')
 const isRefreshing = ref(false)
 const isLoadingMore = ref(false)
-const scrollTop = ref(0)
-const scrollIntoView = ref('')
 const isKeyboardShow = ref(false)
 const showPopup = ref(false)
 const isScrolledToBottom = ref(true)
+const xeUploadRef = ref(null)
+const uploadOptions = ref({
+  // url: '', // Optional: set your upload URL if needed
+})
+const toView = ref('message-bottom')
+const scrollViewRef = ref(null)
+const showMorePopup = ref(false)
+const showRemarkPopup = ref(false)
+const remarkTarget = ref(null)
+const remarkText = ref('')
 
 // 获取当前用户
 const currentUser = computed(() => {
   const user = store.getters.currentUser;
-  if (!user || !user._id) {
+  if (!user || !user._id) { 
     console.warn('Current user is not properly initialized');
     return null;
   }
@@ -299,8 +385,11 @@ const fetchMessages = async () => {
       })
     }
     
-    // 滚动到底部，使用立即滚动
-    scrollToBottom(true)
+    // 获取消息后滚动到底部
+    nextTick(() => {
+      // 确保在DOM更新后滚动到底部
+      scrollToBottom()
+    })
   } catch (error) {
     console.error('Failed to fetch messages:', error)
     uni.showToast({
@@ -341,16 +430,35 @@ watch(() => store.state.currentChat, (newChatId) => {
   }
 })
 
+// 定义滚动到底部的逻辑
+const scrollToBottom = () => {
+  // 重置toView，强制触发滚动
+  toView.value = '';
+  
+  // 使用nextTick确保DOM已更新
+  nextTick(() => {
+    // 立即设置滚动目标，不使用延时
+    setTimeout(() => {
+      toView.value = 'message-bottom';
+    }, 500);
+  });
+}
+
+// 处理滚动到底部事件
+const onScrollToLower = () => {
+  isScrolledToBottom.value = true;
+}
+
 // 监听消息列表变化
 watch(() => messages.value?.length, (newLength, oldLength) => {
   if (newLength > oldLength || !oldLength) {
     nextTick(() => {
-     setTimeout(() => {
-      scrollToBottom(true)
-     }, 300);
+      scrollToBottom()
     })
   }
 }, { immediate: true })
+
+ 
 
 // 页面加载完成
 onMounted(() => {
@@ -362,14 +470,18 @@ onMounted(() => {
     return;
   }
   
-  // 初始化WebSocket连接
-  initWebSocket(store.state.token);
+  // 只有在WebSocket未连接时才初始化连接
+  if (!isConnected.value) {
+    initWebSocket(store.state.token);
+  }
   
   // 标记所有消息为已读
   if (chatId.value) {
     store.commit('CLEAR_UNREAD', chatId.value);
     markMessagesAsRead();
   }
+  
+
   
   // 仅在APP环境下初始化TUICallKit
   // #ifdef APP-PLUS
@@ -496,10 +608,8 @@ const sendMessage = async () => {
     // 发送消息到WebSocket
     sendWebSocketMessage(chatId.value, content, 'text', {})
     
-    // 滚动到底部
-    nextTick(() => {
-      scrollToBottom()
-    })
+    // 立即滚动到底部，不使用延迟，确保新消息立即显示
+    scrollToBottom()
   } catch (error) {
     console.error('Failed to send message:', error)
     uni.showToast({
@@ -509,33 +619,11 @@ const sendMessage = async () => {
   }
 }
 
-// 修改滚动到底部的逻辑
-const scrollToBottom = (immediate = false) => {
-  if (!messages.value || messages.value.length === 0) return
-
-  nextTick(() => {
-    const lastMessage = messages.value[messages.value.length - 1]
-    if (lastMessage && lastMessage._id) {
-      // 先设置滚动到指定消息
-      scrollIntoView.value = `msg-${lastMessage._id}`
-      // 使用 nextTick 确保视图已更新
-      nextTick(() => {
-        if (immediate) {
-          setTimeout(() => {
-            scrollTop.value = 999999
-          }, 300)
-        }
-      })
-    }
-  })
-}
 
 // 处理输入框获取焦点
 const handleInputFocus = () => {
   isKeyboardShow.value = true
-  nextTick(() => {
-    scrollToBottom(true)
-  })
+  scrollToBottom();
 }
 
 // 处理输入框失去焦点
@@ -684,7 +772,7 @@ const chooseImage = () => {
 const decodeFileName = (fileName) => {
   try {
     // 尝试解码文件名
-    return decodeURIComponent(escape(fileName))
+    return decodeURIComponent(fileName);
   } catch (error) {
     console.error('Failed to decode filename:', error)
     return fileName
@@ -708,6 +796,9 @@ const uploadImage = async (filePath) => {
         sendWebSocketMessage(chatId.value, decodedFileName || '图片', 'image', {
           fileUrl: fullUrl
         })
+        
+        // 立即滚动到底部显示新上传的图片
+        scrollToBottom()
       }
     }
   }).catch(error => {
@@ -737,6 +828,9 @@ const handleAudioRecorded = (filePath, duration) => {
           fileUrl: fullUrl,
           duration: duration
         })
+        
+        // 立即滚动到底部显示新上传的音频
+        scrollToBottom()
       }
     }
   }).catch(error => {
@@ -747,66 +841,50 @@ const handleAudioRecorded = (filePath, duration) => {
   })
 }
 
+// 修改选择文件函数
 const chooseFile = () => {
-  // 调用新的文件选择和上传工具函数
-  console.log('调用新的文件选择和上传工具函数');
-  
-  chooseAndUploadDocument({
-    fileTypes: ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf', 'txt'],
-    onProgress: (progress) => {
-      console.log('上传进度:', progress)
-    },
-    onSuccess: (result) => {
-      console.log('文件上传成功:', result);
-      
+  showPopup.value = false;
+  xeUploadRef.value.upload('file', {});
+}
+
+// 处理文件上传成功
+const handleUploadCallback = (e) => {
+  if (e.type === 'choose' && e.data && e.data.length > 0) {
+    const file = e.data[0];
+    // 使用 uploadChatFile 上传
+    uploadChatFile(file.tempFilePath, 'file', (progress) => {
+      // 可选：显示进度
+    }).then(result => {
       if (result && result.status === 'success') {
-        // 检查response格式，兼容两种数据结构
-        const fileData = result.data?.file || result.data
+        const fileData = result.data?.file || result.data || result;
         if (fileData) {
-          // 构建完整的文件URL并解码文件名
-          const fileUrl = fileData.url
-          const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl
-          const decodedFileName = decodeFileName(fileData.fileName)
-          
-          // 发送消息，包括额外字段
+          const fileUrl = fileData.url;
+          const fullUrl = fileUrl.startsWith('http') ? fileUrl : currentConfig.apiUrl + fileUrl;
+          const fileName = file.name || fileData.fileName || fileData.name || '文件消息';
+          const decodedFileName = decodeFileName(fileName);
           sendWebSocketMessage(
-            chatId.value, 
-            decodedFileName || '文件消息', 
-            'file', 
+            chatId.value,
+            decodedFileName || '文件消息',
+            'file',
             {
               fileUrl: fullUrl,
-              fileSize: fileData.fileSize || 0,
-              fileType: fileData.fileType || '',
-              fileExt: fileData.fileExt || fileData.fileName?.split('.').pop() || '',
-              originalFileName: fileData.fileName || decodedFileName || '文件消息'
+              fileSize: fileData.fileSize || fileData.size || file.size || 0,
+              fileType: fileData.fileType || 'file',
+              fileExt: fileData.fileExt || fileName.split('.').pop() || '',
+              originalFileName: fileName || decodedFileName || '文件消息'
             }
-          )
+          );
+          // 立即滚动到底部显示新上传的文件
+          scrollToBottom();
         }
       }
-      
-      showPopup.value = false
-    },
-    onFail: (error) => {
-      console.error('文件上传失败:', error);
-      
+    }).catch(error => {
       uni.showToast({
         title: error.message || '上传失败',
         icon: 'none'
-      })
-      
-      showPopup.value = false
-    }
-  }).catch(error => {
-    console.error('文件选择失败:', error)
-    
-    // 如果是用户取消，不显示错误提示
-    if (error.message !== 'File selection cancelled') {
-      uni.showToast({
-        title: '文件选择失败',
-        icon: 'none'
-      })
-    }
-  })
+      });
+    });
+  }
 }
 
 // 音频播放相关
@@ -885,9 +963,10 @@ const markMessagesAsRead = () => {
 
 // 处理图片加载完成
 const handleImageLoad = () => {
-  if (isScrolledToBottom.value) {
-    scrollToBottom(true)
-  }
+    // 立即滚动到底部，确保图片加载后能完全显示
+    nextTick(() => {
+        scrollToBottom();
+    });
 }
 
 // 跳转到通话页面
@@ -1059,32 +1138,245 @@ const getFileIconName = (fileName) => {
   }
 }
 
+// 显示更多选项
+const showMoreOptions = () => {
+  showMorePopup.value = true
+}
+
+// 处理添加备注
+const handleAddRemark = () => {
+  showMorePopup.value = false
+  
+  // 获取当前聊天对象
+  const chat = store.state.chats.find(c => c._id === chatId.value)
+  if (!chat) return
+  
+  let targetUser
+  if (isGroupChat.value) {
+    // 群聊设置群名称
+    targetUser = { _id: chat._id, username: chat.chatName || '群聊' }
+  } else {
+    // 单聊设置好友备注
+    const otherUser = chat.users.find(u => u._id !== currentUser.value._id)
+    targetUser = otherUser
+  }
+  
+  if (!targetUser) return
+  
+  // 获取当前备注
+  let currentRemark = ''
+  if (!isGroupChat.value) {
+    // 查找当前好友的备注
+    const friendData = store.state.friends.find(f => f.user._id === targetUser._id)
+    if (friendData) {
+      currentRemark = friendData.remark || ''
+    }
+  }
+  
+  // 显示自定义备注弹窗
+  showRemarkPopup.value = true
+  remarkTarget.value = targetUser
+  remarkText.value = currentRemark
+}
+
+// 保存备注
+const saveRemark = async () => {
+  if (!remarkTarget.value || !remarkTarget.value._id) return
+  
+  try {
+    // 更新备注
+    const result = await store.dispatch('updateFriendRemark', {
+      friendId: remarkTarget.value._id,
+      remark: remarkText.value.trim()
+    })
+    
+    if (result.success) {
+      uni.showToast({
+        title: '备注已更新',
+        icon: 'success'
+      })
+      showRemarkPopup.value = false
+    } else {
+      uni.showToast({
+        title: result.message || '更新备注失败',
+        icon: 'none'
+      })
+    }
+  } catch (error) {
+    console.error('Failed to update remark:', error)
+    uni.showToast({
+      title: '更新备注失败',
+      icon: 'none'
+    })
+  }
+}
+
+// 处理删除好友
+const handleDeleteFriend = () => {
+  showMorePopup.value = false
+  
+  // 获取好友信息
+  const chat = store.state.chats.find(c => c._id === chatId.value)
+  if (!chat || chat.isGroupChat) return
+  
+  const friend = chat.users.find(u => u._id !== currentUser.value._id)
+  if (!friend) return
+  
+  uni.showModal({
+    title: '删除好友',
+    content: `确定要删除好友"${friend.username}"吗？删除后将无法接收对方的消息。`,
+    confirmText: '删除',
+    confirmColor: '#FF3B30',
+    success: (res) => {
+      if (res.confirm) {
+        // 调用删除好友API
+        deleteFriend(friend._id)
+      }
+    }
+  })
+}
+
+// 处理退出群聊
+const handleExitGroup = () => {
+  showMorePopup.value = false
+  
+  // 获取群聊信息
+  const chat = store.state.chats.find(c => c._id === chatId.value)
+  if (!chat || !chat.isGroupChat) return
+  
+  uni.showModal({
+    title: '退出群聊',
+    content: `确定要退出"${chat.chatName || '群聊'}"吗？`,
+    confirmText: '退出',
+    confirmColor: '#FF3B30',
+    success: (res) => {
+      if (res.confirm) {
+        // 调用退出群聊API
+        exitGroup(chat._id)
+      }
+    }
+  })
+}
+
+// 删除好友
+const deleteFriend = async (friendId) => {
+  try {
+    // 使用store的方法删除好友
+    const result = await store.dispatch('removeFriend', friendId)
+    
+    if (result.success) {
+      uni.showToast({
+        title: '已删除好友',
+        icon: 'success'
+      })
+      
+      // 删除对应的聊天
+      store.commit('REMOVE_CHAT', chatId.value)
+      
+      // 返回到聊天列表页
+      uni.navigateBack()
+    } else {
+      throw new Error(result.message || '删除好友失败')
+    }
+  } catch (error) {
+    console.error('删除好友失败:', error)
+    uni.showToast({
+      title: '删除好友失败',
+      icon: 'none'
+    })
+  }
+}
+
+// 退出群聊
+const exitGroup = async (groupId) => {
+  try {
+    // 这里调用退出群聊的API
+    const response = await uni.request({
+      url: `${currentConfig.apiUrl}/api/chats/groups/${groupId}/exit`,
+      method: 'POST',
+      header: {
+        'Authorization': `Bearer ${store.state.token}`
+      }
+    })
+    
+    if (response.statusCode === 200) {
+      uni.showToast({
+        title: '已退出群聊',
+        icon: 'success'
+      })
+      
+      // 删除对应的聊天
+      store.commit('REMOVE_CHAT', chatId.value)
+      
+      // 返回到聊天列表页
+      uni.navigateBack()
+    } else {
+      throw new Error('退出群聊失败')
+    }
+  } catch (error) {
+    console.error('退出群聊失败:', error)
+    uni.showToast({
+      title: '退出群聊失败',
+      icon: 'none'
+    })
+  }
+}
+
+// 处理备注输入
+const handleRemarkInput = (e) => {
+  remarkText.value = e.detail.value;
+}
 </script>
 
 <style scoped>
 .chat-container {
-  flex: 1;
-  overflow-y: auto;
-  /* #ifdef APP-PLUS */
-  height: calc(100vh - 88rpx); /* APP端减去输入框高度 */
-  /* #endif */
-  
-  /* #ifndef APP-PLUS */
-  height: calc(100vh - 188rpx); /* 其他端减去输入框高度 */
-  /* #endif */
-  padding: 20rpx;
-  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: relative;
+  background-color: #f7f7f7;
+  overflow: hidden;
+}
+
+/* 顶部操作栏样式 */
+.action-bar {
+  position: fixed;
+  top: var(--status-bar-height, 20px);
+  right: 0;
+  z-index: 100;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 24rpx;
+  z-index: 99999;
+}
+
+.more-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .message-list {
   flex: 1;
+  height: calc(100vh - 100rpx); /* 减去输入框高度 */
+  padding: 0;
   position: relative;
-  height: 100%; /* 使用100%填充父容器 */
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch; /* 增加弹性滚动效果 */
+  scroll-behavior: smooth; /* 平滑滚动 */
+  overflow-anchor: auto; /* 优化滚动锚定 */
+  overscroll-behavior: contain; /* 防止滚动串联 */
+  will-change: scroll-position; /* 优化滚动性能 */
 }
 
 .message-wrapper {
-  min-height: 100%;
   box-sizing: border-box;
+  padding: 20rpx;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -1106,6 +1398,12 @@ const getFileIconName = (fileName) => {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.message-placeholder {
+  height: 20rpx; /* 底部留白，防止最后一条消息被输入框遮挡 */
+  width: 100%;
+  flex-shrink: 0;
 }
 
 .message-item {
@@ -1457,13 +1755,14 @@ const getFileIconName = (fileName) => {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 0 24rpx;
+  padding: 16rpx 24rpx;
   background-color: #f7f7f7;
   border-top: 1rpx solid #e5e5e5;
   z-index: 100;
-  height: 100rpx; /* 44px */
+  height: 100rpx;
   display: flex;
   align-items: center;
+  box-sizing: border-box;
 }
 
 .input-wrapper {
@@ -1617,6 +1916,8 @@ const getFileIconName = (fileName) => {
 
 .popup-content {
   padding: 30rpx 0;
+  background-color: #ffffff;
+  border-radius: 20rpx 20rpx 0 0;
 }
 
 .popup-grid {
@@ -1647,5 +1948,203 @@ const getFileIconName = (fileName) => {
 .grid-item-text {
   font-size: 24rpx;
   color: #333;
+}
+
+/* 更多选项弹出菜单样式 */
+.popup-list {
+  background-color: #ffffff;
+  border-radius: 16rpx 16rpx 0 0;
+  overflow: hidden;
+}
+
+.popup-item {
+  height: 110rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.popup-item-text {
+  font-size: 32rpx;
+  color: #333;
+}
+
+.popup-item-text.danger {
+  color: #ff3b30;
+}
+
+.popup-cancel {
+  height: 110rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffffff;
+  margin-top: 16rpx;
+  border-radius: 16rpx;
+  font-size: 32rpx;
+  color: #333;
+}
+
+/* 自定义备注弹窗样式 */
+.remark-popup {
+  padding: 0 !important;
+  background-color: #ffffff;
+  border-radius: 20rpx 20rpx 0 0;
+  overflow: hidden;
+}
+
+.popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx 24rpx;
+  border-bottom: 1px solid #f5f5f5;
+  position: relative;
+}
+
+.popup-title {
+  font-size: 34rpx;
+  font-weight: 500;
+  color: #333;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.header-left, .header-right {
+  min-width: 80rpx;
+  height: 60rpx;
+  display: flex;
+  align-items: center;
+  z-index: 1;
+}
+
+.header-left {
+  justify-content: flex-start;
+}
+
+.header-right {
+  justify-content: flex-end;
+}
+
+.cancel-text {
+  font-size: 32rpx;
+  color: #666;
+}
+
+.save-text {
+  font-size: 32rpx;
+  color: #999;
+  font-weight: 500;
+}
+
+.save-active {
+  color: #07c160;
+}
+
+.popup-body {
+  padding: 30rpx 24rpx;
+}
+
+.input-container {
+  margin-bottom: 40rpx;
+}
+
+.input-label {
+  font-size: 28rpx;
+  color: #333;
+  margin-bottom: 16rpx;
+  font-weight: 500;
+}
+
+.input-wrapper {
+  border: 1px solid #e5e5e5;
+  border-radius: 8rpx;
+  background-color: #f8f8f8;
+  padding: 16rpx;
+  transition: all 0.3s;
+}
+
+.input-wrapper:focus-within {
+  border-color: #07c160;
+  box-shadow: 0 0 0 2px rgba(7, 193, 96, 0.1);
+}
+
+.remark-input {
+  width: 100%;
+  min-height: 120rpx;
+  background-color: transparent;
+  border: none;
+  font-size: 30rpx;
+  color: #333;
+  line-height: 1.5;
+}
+
+.remark-tips {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16rpx;
+  padding: 0 10rpx;
+}
+
+.remark-tips text {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.remark-count {
+  color: #666;
+  transition: color 0.3s;
+}
+
+.count-warning {
+  color: #ff9900;
+}
+
+.preview-section {
+  margin-top: 40rpx;
+  padding-top: 30rpx;
+  border-top: 1px solid #f5f5f5;
+}
+
+.preview-title {
+  font-size: 28rpx;
+  color: #333;
+  margin-bottom: 16rpx;
+  font-weight: 500;
+}
+
+.preview-card {
+  display: flex;
+  align-items: center;
+  padding: 24rpx;
+  background-color: #f8f8f8;
+  border-radius: 12rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.05);
+}
+
+.preview-avatar {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 8rpx;
+  margin-right: 20rpx;
+  background-color: #e0e0e0;
+}
+
+.preview-info {
+  flex: 1;
+}
+
+.preview-name {
+  font-size: 32rpx;
+  color: #333;
+  margin-bottom: 8rpx;
+  font-weight: 500;
+}
+
+.preview-original {
+  font-size: 26rpx;
+  color: #999;
 }
 </style>

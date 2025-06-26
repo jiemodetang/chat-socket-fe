@@ -22,7 +22,7 @@
           <u-icon name="account-fill" size="28" color="#fff"></u-icon>
         </view>
         <text class="feature-name">新朋友</text>
-        <view v-if="pendingRequestsCount > 0" class="badge">{{ pendingRequestsCount }}</view>
+        <view v-if="pendingRequests > 0" class="badge">{{ pendingRequests }}</view>
       </view>
       
       <view class="feature-item" @click="goToAddFriend">
@@ -75,8 +75,9 @@
             </view>
             
             <view class="contact-info">
-              <text class="contact-name">{{ friend.username }}</text>
-              <text v-if="friend.signature" class="contact-signature">{{ friend.signature }}</text>
+              <text class="contact-name">{{ friend.displayName }}</text>
+              <text v-if="friend.originalName" class="contact-original-name">昵称: {{ friend.originalName }}</text>
+              <text v-else-if="friend.signature" class="contact-signature">{{ friend.signature }}</text>
             </view>
           </view>
         </view>
@@ -109,84 +110,118 @@ const isRefreshing = ref(false)
 const pendingRequests = ref(0)
 
 // 获取好友列表
-const friends = computed(() => store.getters.friendsList)
-const pendingRequestsCount = computed(() => store.getters.pendingFriendRequestsCount)
-
-// 索引列表
-const indexList = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '#']
-
-// 按首字母分组的好友列表
-const groupedFriends = computed(() => {
-  const groups = {}
-  
-  // 初始化所有字母分组
-  indexList.forEach(letter => {
-    groups[letter] = []
-  })
-
-  // 根据首字母分组
-  friends.value.forEach(friend => {
-    const firstLetter = getFirstLetter(friend.username)
-    if (groups[firstLetter]) {
-      groups[firstLetter].push(friend)
-    } else {
-      groups['#'].push(friend)
+const friends = computed(() => {
+  // 转换好友数据结构，使其适配现有UI
+  return store.state.friends.map(friendData => {
+    const user = friendData.user
+    // 如果有备注，则使用备注作为显示名称
+    if (friendData.remark) {
+      return {
+        ...user,
+        displayName: friendData.remark,
+        originalName: user.username
+      }
+    }
+    return {
+      ...user,
+      displayName: user.username
     }
   })
-  
-  // 过滤掉空的分组
-  const filteredGroups = {}
-  for (const key in groups) {
-    if (groups[key].length > 0) {
-      filteredGroups[key] = groups[key]
-    }
-  }
-  
-  return filteredGroups
 })
 
-// 获取名字的首字母（简单实现，实际应用中可能需要更复杂的拼音转换）
+// 根据首字母分组好友
+const groupedFriends = computed(() => {
+  if (!friends.value || friends.value.length === 0) return {}
+  
+  // 按拼音首字母分组
+  const grouped = {}
+  
+  friends.value.forEach(friend => {
+    // 使用displayName（可能是备注名）来排序
+    const name = friend.displayName || friend.username
+    const firstLetter = getFirstLetter(name).toUpperCase()
+    
+    if (!grouped[firstLetter]) {
+      grouped[firstLetter] = []
+    }
+    
+    grouped[firstLetter].push(friend)
+  })
+  
+  // 对每个分组内的好友按名称排序
+  Object.keys(grouped).forEach(key => {
+    grouped[key].sort((a, b) => {
+      const nameA = a.displayName || a.username
+      const nameB = b.displayName || b.username
+      return nameA.localeCompare(nameB, 'zh-CN')
+    })
+  })
+  
+  return grouped
+})
+
+// 索引列表
+const indexList = computed(() => {
+  if (!groupedFriends.value) return []
+  return Object.keys(groupedFriends.value).sort()
+})
+
+// 获取名字的首字母（用于排序）
 const getFirstLetter = (name) => {
   if (!name) return '#'
   
-  const first = name.charAt(0).toUpperCase()
-  if (/[A-Z]/.test(first)) {
-    return first
+  // 这里可以使用拼音库获取中文拼音首字母
+  // 简单实现：如果是英文字母开头，直接返回；否则返回#
+  const firstChar = name.charAt(0)
+  if (/[a-zA-Z]/.test(firstChar)) {
+    return firstChar.toUpperCase()
   }
   
-  // 这里简化处理，实际应用中应该使用拼音库
+  // 如果有拼音库，这里可以获取中文拼音首字母
+  // 示例中简单返回#，实际应使用拼音库
   return '#'
 }
 
-// 监听好友请求数量变化，更新角标
-watch(() => pendingRequestsCount.value, (newCount) => {
-  updateTabBarBadge(newCount)
-})
-
-// 更新Tab角标
-const updateTabBarBadge = (count) => {
-  if (count > 0) {
-    // 设置角标
-    uni.setTabBarBadge({
-      index: 1, // 通讯录的索引
-      text: count.toString()
-    }).catch(err => {
-      console.log('Failed to set badge:', err)
-    })
-  } else {
-    // 移除角标
-    uni.removeTabBarBadge({
-      index: 1
-    }).catch(err => {
-      // 忽略可能的错误（如果角标不存在）
-      console.log('No badge to remove')
-    })
-  }
+// 滚动到指定索引
+const scrollToIndex = (letter) => {
+  const selector = `#index-${letter}`
+  const query = uni.createSelectorQuery()
+  query.select(selector).boundingClientRect()
+  query.selectViewport().scrollOffset()
+  query.exec(function(res) {
+    if (res && res[0]) {
+      uni.pageScrollTo({
+        scrollTop: res[0].top + res[1].scrollTop - 100,
+        duration: 300
+      })
+    }
+  })
 }
 
-// 页面加载时获取好友列表和好友请求
+// 处理联系人点击
+const handleContactClick = (friend) => {
+  // 跳转到聊天页面
+  uni.navigateTo({
+    url: `/pages/chat/index?id=${friend.chatId || ''}&userId=${friend._id}`
+  })
+}
+
+// 跳转到添加好友页面
+const goToAddFriend = () => {
+  uni.navigateTo({
+    url: '/pages/add-friend/index'
+  })
+}
+
+// 跳转到好友请求页面
+const goToNewFriends = () => {
+  uni.navigateTo({
+    url: '/pages/new-friends/index'
+  })
+}
+
+// 页面加载
 onMounted(async () => {
-  // 检查是否已登录
   if (!store.getters.isAuthenticated) {
     uni.redirectTo({
       url: '/pages/login/index'
@@ -194,54 +229,38 @@ onMounted(async () => {
     return
   }
   
-  // 获取好友请求
-  await fetchFriendRequests()
-  
-  // 初始化角标
-  updateTabBarBadge(pendingRequestsCount.value)
+  await fetchData()
 })
 
+// 每次显示页面时刷新数据
 onShow(async () => {
-  await fetchFriends()
-  await fetchFriendRequests()
-  
-  // 更新角标
-  updateTabBarBadge(pendingRequestsCount.value)
+  if (store.getters.isAuthenticated) {
+    await fetchData()
+  }
 })
 
-// 获取好友列表
-const fetchFriends = async () => {
+// 获取数据
+const fetchData = async () => {
   isLoading.value = true
   try {
+    // 获取好友列表
     await store.dispatch('fetchFriends')
+    
+    // 获取好友请求数量
+    await store.dispatch('fetchFriendRequests')
+    pendingRequests.value = store.state.friendRequests.length
   } catch (error) {
-    console.error('Failed to fetch friends:', error)
-    uni.showToast({
-      title: '获取好友列表失败',
-      icon: 'none'
-    })
+    console.error('Failed to fetch data:', error)
   } finally {
     isLoading.value = false
   }
 }
 
-// 获取好友请求
-const fetchFriendRequests = async () => {
-  try {
-    await store.dispatch('fetchFriendRequests')
-    // 更新通讯录Tab的角标
-    updateTabBarBadge(pendingRequestsCount.value)
-  } catch (error) {
-    console.error('Failed to fetch friend requests:', error)
-  }
-}
-
-// 下拉刷新
+// 处理下拉刷新
 const onRefresh = async () => {
   isRefreshing.value = true
   try {
-    await fetchFriends()
-    // pendingRequests.value = store.state.friendRequests.length
+    await fetchData()
   } finally {
     isRefreshing.value = false
   }
@@ -258,70 +277,17 @@ const handleSearch = () => {
   })
 }
 
-// 点击联系人
-const handleContactClick = async (friend) => {
-  // 创建或获取与该好友的聊天
-  try {
-    
-    const result = await store.dispatch('createSingleChat', friend._id)
-    if (result.success) {
-      // 设置当前聊天
-      store.commit('SET_CURRENT_CHAT', result.chat._id)
-      
-      // 跳转到聊天页面
-      uni.navigateTo({
-        url: `/pages/chat/index?id=${result.chat._id}`
-      })
-    } else {
-      uni.showToast({
-        title: '创建聊天失败',
-        icon: 'none'
-      })
-    }
-  } catch (error) {
-    console.error('Failed to create chat:', error)
-    uni.showToast({
-      title: '创建聊天失败',
-      icon: 'none'
-    })
-  }
-}
-
-// 滚动到指定索引
-const scrollToIndex = (letter) => {
-  const selector = uni.createSelectorQuery()
-  selector.select(`#index-${letter}`).boundingClientRect()
-  selector.selectViewport().scrollOffset()
-  selector.exec(res => {
-    if (res[0]) {
-      uni.pageScrollTo({
-        scrollTop: res[0].top + res[1].scrollTop - 100,
-        duration: 300
-      })
-    }
-  })
-}
-
-// 跳转到新朋友页面
-const goToNewFriends = () => {
-  uni.navigateTo({
-    url: '/pages/new-friends/index'
-  })
-}
-
-// 跳转到添加好友页面
-const goToAddFriend = () => {
-  uni.navigateTo({
-    url: '/pages/add-friend/index'
-  })
-}
-
 // 跳转到创建群聊页面
 const goToCreateGroup = () => {
   uni.navigateTo({
     url: '/pages/create-group/index'
   })
 }
+
+// 监听好友请求数量变化
+watch(() => store.state.friendRequests.length, (newCount) => {
+  pendingRequests.value = newCount
+})
 </script>
 
 <style scoped>
@@ -470,6 +436,11 @@ const goToCreateGroup = () => {
   font-size: 32rpx;
   color: #333;
   margin-bottom: 8rpx;
+}
+
+.contact-original-name {
+  font-size: 26rpx;
+  color: #999;
 }
 
 .contact-signature {

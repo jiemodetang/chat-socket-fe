@@ -45,7 +45,6 @@ export function useWebSocket() {
   const onlineUsers = computed(() => store.getters['websocket/onlineUsers']);
   const currentUser = computed(() => store.getters['websocket/currentUser']);
   const getTypingUsers = (chatId) => store.getters['websocket/getTypingUsers'](chatId);
-  const getUnreadMessageCount = (chatId) => store.getters['websocket/getUnreadMessageCount'](chatId);
 
 
 
@@ -63,6 +62,5 @@ export function useWebSocket() {
     onlineUsers,
     currentUser,
     getTypingUsers,
-    getUnreadMessageCount
   };
 } 

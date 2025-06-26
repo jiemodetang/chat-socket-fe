@@ -242,12 +242,24 @@ class WebSocketService {
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, []);
     }
-    this.messageHandlers.get(type).push(handler);
+    
+    // 检查是否已经注册了相同的处理器，防止重复注册
+    const handlers = this.messageHandlers.get(type);
+    if (!handlers.some(h => h.toString() === handler.toString())) {
+      handlers.push(handler);
+    }
   }
 
   // 移除消息处理器
   off(type, handler) {
     if (this.messageHandlers.has(type)) {
+      // 如果没有提供具体的handler，则清除该类型的所有处理器
+      if (!handler) {
+        this.messageHandlers.set(type, []);
+        return;
+      }
+      
+      // 否则只移除指定的处理器
       const handlers = this.messageHandlers.get(type);
       const index = handlers.indexOf(handler);
       if (index !== -1) {

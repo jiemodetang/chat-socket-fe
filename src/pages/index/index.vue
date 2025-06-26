@@ -113,6 +113,14 @@ onShow(async () => {
     
     // 获取聊天列表
     await fetchChats()
+    
+    // 清除会话tab的角标，因为用户已经看到了会话列表
+    // 但保留各个会话的未读计数
+    uni.removeTabBarBadge({
+      index: 0
+    }).catch(err => {
+      console.log('No badge to remove')
+    })
   } catch (error) {
     console.error('Failed to initialize chat list:', error)
     uni.showToast({

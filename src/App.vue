@@ -15,20 +15,29 @@ import { watch } from 'vue'
 
 const store = useStore()
 
-// 监听好友请求数量变化，更新角标
+// 监听好友请求数量变化，更新通讯录角标
 watch(() => store.getters.pendingFriendRequestsCount, (newCount) => {
-  updateTabBarBadge(newCount)
+  if (newCount !== undefined) {
+    updateContactsTabBadge(newCount)
+  }
 })
 
-// 更新Tab角标
-const updateTabBarBadge = (count) => {
+// 监听未读消息数量变化，更新会话角标
+watch(() => store.getters.unreadCount, (newCount) => {
+  if (newCount !== undefined) {
+    updateConversationTabBadge(newCount)
+  }
+})
+
+// 更新通讯录Tab角标
+const updateContactsTabBadge = (count) => {
   if (count > 0) {
     // 设置角标
     uni.setTabBarBadge({
       index: 1, // 通讯录的索引
       text: count.toString()
     }).catch(err => {
-      console.log('Failed to set badge:', err)
+      console.log('Failed to set contacts badge:', err)
     })
   } else {
     // 移除角标
@@ -36,7 +45,28 @@ const updateTabBarBadge = (count) => {
       index: 1
     }).catch(err => {
       // 忽略可能的错误（如果角标不存在）
-      console.log('No badge to remove')
+      console.log('No contacts badge to remove')
+    })
+  }
+}
+
+// 更新会话Tab角标
+const updateConversationTabBadge = (count) => {
+  if (count > 0) {
+    // 设置角标
+    uni.setTabBarBadge({
+      index: 0, // 会话的索引
+      text: count.toString()
+    }).catch(err => {
+      console.log('Failed to set conversation badge:', err)
+    })
+  } else {
+    // 移除角标
+    uni.removeTabBarBadge({
+      index: 0
+    }).catch(err => {
+      // 忽略可能的错误（如果角标不存在）
+      console.log('No conversation badge to remove')
     })
   }
 }
@@ -64,8 +94,12 @@ onLaunch(async () => {
         // 获取好友请求
         await store.dispatch('fetchFriendRequests')
         
+        // 获取聊天列表（确保未读消息计数已加载）
+        await store.dispatch('fetchChats')
+        
         // 初始化角标
-        updateTabBarBadge(store.getters.pendingFriendRequestsCount)
+        updateContactsTabBadge(store.getters.pendingFriendRequestsCount)
+        updateConversationTabBadge(store.getters.unreadCount)
       }
     } catch (error) {
       console.error('Failed to fetch user info:', error)
@@ -76,20 +110,64 @@ onLaunch(async () => {
       })
     }
   }
+
+  // 禁用截屏功能
+  disableScreenshots()
 })
 
 onShow(() => {
   console.log('App Show')
   // 应用显示时更新角标
-  const count = store.getters.pendingFriendRequestsCount
-  if (count !== undefined) {
-    updateTabBarBadge(count)
+  const friendRequestCount = store.getters.pendingFriendRequestsCount
+  const unreadMessageCount = store.getters.unreadCount
+  
+  // 更新通讯录角标
+  if (friendRequestCount !== undefined) {
+    updateContactsTabBadge(friendRequestCount)
+  }
+  
+  // 更新会话角标
+  if (unreadMessageCount !== undefined) {
+    updateConversationTabBadge(unreadMessageCount)
   }
 })
 
 onHide(() => {
   console.log('App Hide')
 })
+
+function disableScreenshots() {
+  // #ifdef APP-PLUS
+  try {
+    // Android平台
+    if (uni.getSystemInfoSync().platform === 'android') {
+      const main = plus.android.runtimeMainActivity();
+      const window = main.getWindow();
+      const FLAG_SECURE = 0x00002000;
+      window.addFlags(FLAG_SECURE);
+      console.log('Android截屏限制已启用');
+    } 
+    // iOS平台
+    else if (uni.getSystemInfoSync().platform === 'ios') {
+      const UIScreen = plus.ios.importClass("UIScreen");
+      const UIWindow = plus.ios.importClass("UIWindow");
+      const UIApplication = plus.ios.importClass("UIApplication");
+      
+      const mainScreen = UIScreen.mainScreen();
+      const windows = UIApplication.sharedApplication().windows();
+      
+      for (let i = 0; i < windows.count(); i++) {
+        const window = windows.objectAtIndex(i);
+        window.setScreen(mainScreen);
+      }
+      
+      console.log('iOS截屏限制已启用');
+    }
+  } catch (e) {
+    console.error('禁用截屏功能失败:', e);
+  }
+  // #endif
+}
 </script>
 
 <style lang="scss">

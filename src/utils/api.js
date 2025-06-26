@@ -207,6 +207,13 @@ const apiService = {
       method: 'DELETE'
     }),
 
+    // 修改好友备注
+    updateFriendRemark: (friendId, remark) => request({
+      url: `/users/friends/${friendId}/remark`,
+      method: 'PATCH',
+      data: { remark }
+    }),
+
     // 更新用户资料
     updateProfile: (userData) => request({
       url: '/users/update',

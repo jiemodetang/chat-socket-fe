@@ -131,9 +131,9 @@ export const uploadAvatar = (filePath, onProgress) => {
 
 /**
  * 上传聊天文件
- * @param {String} filePath - 文件路径
- * @param {String} type - 文件类型 (image/audio/file)
- * @param {Function} onProgress - 上传进度回调
+ * @param {String} filePath 文件路径
+ * @param {String} fileType 文件类型 (image, audio, video, file)
+ * @param {Function} onProgress 上传进度回调函数
  * @returns {Promise} 上传结果Promise
  */
 export const uploadChatFile = (filePath, type, onProgress) => {
@@ -145,6 +145,65 @@ export const uploadChatFile = (filePath, type, onProgress) => {
     onProgress
   })
 }
+/**
+ * 通过renderjs上传文件
+ * @param {Object} options 上传选项
+ * @returns {Promise} 上传结果Promise
+ */
+export const uploadFileByRenderjs = (options = {}) => {
+  return new Promise((resolve, reject) => {
+    // 获取token
+    const token = uni.getStorageSync('token');
+    if (!token) {
+      reject({ message: '未登录，请先登录' });
+      return;
+    }
+
+    // 创建FileUploader组件实例
+    const fileUploader = document.createElement('file-uploader');
+    document.body.appendChild(fileUploader);
+
+    // 设置上传参数
+    const uploadParams = {
+      url: `${currentConfig.apiUrl}/api/chat/upload`,
+      name: 'file',
+      header: {
+        'Authorization': `Bearer ${token}`
+      },
+      formData: {
+        type: options.fileType || 'file'
+      },
+      fileTypes: options.fileTypes || []
+    };
+
+    // 监听上传事件
+    fileUploader.addEventListener('success', (event) => {
+      document.body.removeChild(fileUploader);
+      resolve({
+        status: 'success',
+        data: event.detail
+      });
+    });
+
+    fileUploader.addEventListener('warning', (event) => {
+      document.body.removeChild(fileUploader);
+      reject({
+        message: event.detail?.message || '上传失败',
+        status: 'error',
+        error: event.detail
+      });
+    });
+
+    fileUploader.addEventListener('onprogress', (event) => {
+      if (typeof options.onProgress === 'function') {
+        options.onProgress(event.detail?.progress || 0);
+      }
+    });
+
+    // 触发上传
+    fileUploader.upload(uploadParams);
+  });
+};
 
 /**
  * 选择并上传图片

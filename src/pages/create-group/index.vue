@@ -1,39 +1,36 @@
 <template>
   <view class="create-group-container">
-    <!-- 顶部表单 -->
-    <view class="form-section">
-      <view class="form-item">
-        <text class="form-label">群聊名称</text>
-        <input class="form-input" type="text" v-model="groupName" placeholder="请输入群聊名称" maxlength="20" />
+    <!-- 顶部输入区域 -->
+    <view class="input-area">
+      <view class="group-name-input">
+        <text class="input-label">群聊名称</text>
+        <input type="text" v-model="groupName" placeholder="请输入群聊名称" maxlength="20" />
       </view>
-    </view>
 
-    <!-- 好友选择 -->
-    <view class="select-section">
-      <view class="section-header">
-        <text class="section-title">选择好友</text>
-        <text class="selected-count">已选择 {{ selectedFriends.length }} 人</text>
+      <!-- 已选择的好友展示区域 -->
+      <view class="selected-friends" v-if="selectedFriends.length > 0">
+        <scroll-view scroll-x class="selected-scroll">
+          <view class="selected-list">
+            <view v-for="friend in selectedFriends" :key="friend._id" class="selected-item">
+              <image class="selected-avatar" :src="friend.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
+              <text class="selected-name">{{ friend.displayName }}</text>
+              <view class="remove-btn" @click.stop="removeSelectedFriend(friend)">
+                <text class="remove-icon">×</text>
+              </view>
+            </view>
+          </view>
+        </scroll-view>
       </view>
 
       <!-- 搜索框 -->
       <view class="search-bar">
-        <view class="search-input-wrapper">
-          <text class="search-icon">🔍</text>
-          <input class="search-input" type="text" v-model="searchQuery" placeholder="搜索好友" @input="filterFriends" />
-          <text v-if="searchQuery.length > 0" class="clear-icon" @click="clearSearch">✕</text>
-        </view>
+        <u-icon name="search" size="20" color="#999"></u-icon>
+        <input class="search-input" type="text" v-model="searchQuery" placeholder="搜索好友" />
       </view>
+    </view>
 
-      <!-- 已选择的好友 -->
-      <scroll-view v-if="selectedFriends.length > 0" scroll-x class="selected-friends">
-        <view v-for="friend in selectedFriends" :key="friend._id" class="selected-friend-item">
-          <image class="selected-avatar" :src="friend.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
-          <text class="selected-name">{{ friend.username }}</text>
-          <text class="remove-icon" @click="toggleSelectFriend(friend)">✕</text>
-        </view>
-      </scroll-view>
-
-      <!-- 好友列表 -->
+    <!-- 好友列表 -->
+    <view class="friend-list-container">
       <scroll-view scroll-y class="friend-list" :class="{ 'has-selected': selectedFriends.length > 0 }">
         <!-- 空状态 -->
         <view v-if="filteredFriends.length === 0" class="empty-state">
@@ -45,7 +42,7 @@
             :class="{ 'selected': isSelected(friend._id) }" @click="toggleSelectFriend(friend)">
             <view class="friend-info">
               <image class="avatar" :src="friend.avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
-              <text class="username">{{ friend.username }}</text>
+              <text class="username">{{ friend.displayName }}</text>
             </view>
 
             <view class="checkbox" :class="{ 'checked': isSelected(friend._id) }">
@@ -75,7 +72,24 @@ const selectedFriends = ref([])
 const isLoading = ref(true)
 
 // 获取好友列表
-const friends = computed(() => store.state.friends)
+const friends = computed(() => {
+  // 转换好友数据结构，使其适配现有UI
+  return store.state.friends.map(friendData => {
+    const user = friendData.user
+    // 如果有备注，则使用备注作为显示名称
+    if (friendData.remark) {
+      return {
+        ...user,
+        displayName: friendData.remark,
+        originalName: user.username
+      }
+    }
+    return {
+      ...user,
+      displayName: user.username
+    }
+  })
+})
 
 // 过滤后的好友列表
 const filteredFriends = computed(() => {
@@ -85,7 +99,8 @@ const filteredFriends = computed(() => {
 
   const query = searchQuery.value.toLowerCase()
   return friends.value.filter(friend =>
-    friend.username.toLowerCase().includes(query) ||
+    friend.displayName.toLowerCase().includes(query) ||
+    (friend.originalName && friend.originalName.toLowerCase().includes(query)) ||
     friend.email.toLowerCase().includes(query)
   )
 })
@@ -190,21 +205,25 @@ const handleCreateGroup = async () => {
   background-color: #f5f7fa;
 }
 
-.form-section {
+.input-area {
   background-color: #ffffff;
   padding: 30rpx;
   margin-bottom: 20rpx;
 }
 
-.form-item {
+.group-name-input {
   display: flex;
   align-items: center;
 }
 
-.form-label {
+.input-label {
   width: 160rpx;
   font-size: 30rpx;
   color: #333;
+}
+
+.selected-friends {
+  margin-bottom: 20rpx;
 }
 
 .form-input {

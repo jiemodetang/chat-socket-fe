@@ -156,7 +156,7 @@ const clearSearch = () => {
 
 // 判断是否已经是好友
 const isFriend = (userId) => {
-  return friends.value.some(friend => friend._id === userId)
+  return friends.value.some(friend => friend.user._id === userId)
 }
 
 const isCurrentUser = (userId) => {
