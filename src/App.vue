@@ -66,7 +66,7 @@ onLaunch(async () => {
   console.log('App Launch')
 
   // 禁用截屏和录屏功能
-  disableScreenshotsAndRecording()
+  disableScreenRecording()
   
   // 检查是否有token，如果有则初始化WebSocket连接和获取用户信息
   const token = uni.getStorageSync('token')
@@ -109,6 +109,7 @@ onLaunch(async () => {
 
 onShow(() => {
   console.log('App Show')
+  disableScreenRecording()
   // 应用显示时更新角标
   const friendRequestCount = store.getters.pendingFriendRequestsCount
   const unreadMessageCount = store.getters.unreadCount
@@ -128,22 +129,25 @@ onHide(() => {
   console.log('App Hide')
 })
 
-function disableScreenshotsAndRecording() {
-    // #ifdef APP-PLUS && APP-ANDROID
+function disableScreenRecording() {
+    // #ifdef APP-PLUS
     try {
-        const activity = plus.android.runtimeMainActivity();
-        const WindowManager = plus.android.importClass("android.view.WindowManager");
-        const LayoutParams = WindowManager.LayoutParams;
+        const main = plus.android.runtimeMainActivity();
+        const Context = plus.android.importClass('android.content.Context');
+        const WindowManager = plus.android.importClass('android.view.WindowManager');
         
-        // 获取当前 Window
-        const window = activity.getWindow();
+        // 使用反射方式获取FLAG_SECURE值（通常为8192）
+        const FLAG_SECURE = 0x00002000;
         
-        // 添加 FLAG_SECURE（禁止截屏和录屏）
-        window.addFlags(LayoutParams.FLAG_SECURE);
+        // 获取Window对象
+        const window = plus.android.invoke(main, 'getWindow');
         
-        console.log("已禁用截屏和录屏");
+        // 调用addFlags方法
+        plus.android.invoke(window, 'addFlags', FLAG_SECURE);
+        
+        console.log('已禁止截屏和录屏');
     } catch (e) {
-        console.error("禁用失败:", e);
+        console.error('禁止录屏设置失败:', e);
     }
     // #endif
 }
