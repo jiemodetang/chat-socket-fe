@@ -67,14 +67,13 @@
 import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useStore } from 'vuex'
+import { updateContactsBadge } from '@/utils/badgeManager'
 
 const store = useStore()
-const isLoading = ref(true)
+const friendRequests = computed(() => store.state.friendRequests)
+const isLoading = ref(false)
 const isRefreshing = ref(false)
 const isProcessing = ref({}) // 跟踪每个请求的处理状态
-
-// 获取好友请求列表
-const friendRequests = computed(() => store.getters.pendingFriendRequests)
 
 // 页面加载时获取好友请求
 onMounted(async () => {
@@ -98,6 +97,9 @@ const fetchFriendRequests = async () => {
   isLoading.value = true
   try {
     await store.dispatch('fetchFriendRequests')
+    
+    // 更新通讯录Tab角标
+    updateTabBadge()
   } catch (error) {
     console.error('Failed to fetch friend requests:', error)
     uni.showToast({
@@ -146,6 +148,9 @@ const handleAccept = async (requestId) => {
       
       // 更新好友请求数量，以便更新角标
       await store.dispatch('fetchFriendRequests')
+      
+      // 更新通讯录Tab角标
+      updateTabBadge()
     } else {
       uni.showToast({
         title: response.message || '接受好友请求失败',
@@ -193,6 +198,9 @@ const handleReject = async (requestId) => {
       
       // 更新好友请求数量，以便更新角标
       await store.dispatch('fetchFriendRequests')
+      
+      // 更新通讯录Tab角标
+      updateTabBadge()
     } else {
       uni.showToast({
         title: response.message || '拒绝好友请求失败',
@@ -235,6 +243,11 @@ const formatTime = (timestamp) => {
     const day = String(date.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
   }
+}
+
+// 更新通讯录Tab角标
+const updateTabBadge = () => {
+  updateContactsBadge(store.state.friendRequests.length)
 }
 </script>
 

@@ -102,6 +102,7 @@
 import { onShow } from '@dcloudio/uni-app'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
+import { updateContactsBadge } from '@/utils/badgeManager'
 
 const store = useStore()
 const searchText = ref('')
@@ -199,11 +200,56 @@ const scrollToIndex = (letter) => {
 }
 
 // 处理联系人点击
-const handleContactClick = (friend) => {
-  // 跳转到聊天页面
-  uni.navigateTo({
-    url: `/pages/chat/index?id=${friend.chatId || ''}&userId=${friend._id}`
+const handleContactClick = async (friend) => {
+  console.log('Contact clicked:', friend)
+  
+  // 显示加载中
+  uni.showLoading({
+    title: '正在加载聊天...'
   })
+  
+  try {
+    let chatId = friend.chatId
+    
+    // 如果没有chatId，先检查是否有现有聊天
+    if (!chatId) {
+      console.log('No chatId found, searching for existing chat or creating new one')
+      
+      // 检查是否有与该好友的现有聊天
+      const existingChat = store.state.chats.find(chat => {
+        if (chat.isGroupChat) return false
+        return chat.users.some(user => user._id === friend._id)
+      })
+      
+      if (existingChat) {
+        console.log('Found existing chat:', existingChat)
+        chatId = existingChat._id
+      } else {
+        console.log('No existing chat found, creating new chat with user:', friend._id)
+        // 创建新的聊天
+        const result = await store.dispatch('createSingleChat', friend._id)
+        if (result.success && result.chat) {
+          console.log('New chat created:', result.chat)
+          chatId = result.chat._id
+        } else {
+          throw new Error('创建聊天失败')
+        }
+      }
+    }
+    
+    // 跳转到聊天页面
+    uni.navigateTo({
+      url: `/pages/chat/index?id=${chatId}&userId=${friend._id}`
+    })
+  } catch (error) {
+    console.error('Failed to navigate to chat:', error)
+    uni.showToast({
+      title: '打开聊天失败',
+      icon: 'none'
+    })
+  } finally {
+    uni.hideLoading()
+  }
 }
 
 // 跳转到添加好友页面
@@ -287,6 +333,7 @@ const goToCreateGroup = () => {
 // 监听好友请求数量变化
 watch(() => store.state.friendRequests.length, (newCount) => {
   pendingRequests.value = newCount
+  updateContactsBadge(newCount)
 })
 </script>
 

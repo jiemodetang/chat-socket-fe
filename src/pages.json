@@ -43,7 +43,8 @@
     {
       "path": "pages/chat/index",
       "style": {
-        "navigationBarTitleText": "聊天详情"
+        "navigationBarTitleText": "聊天详情",
+        "navigationStyle": "custom"
       }
     },
     {
@@ -62,6 +63,13 @@
       "path": "pages/create-group/index",
       "style": {
         "navigationBarTitleText": "创建群聊"
+      }
+    },
+    {
+      "path": "pages/group-settings/index",
+      "style": {
+        "navigationBarTitleText": "群聊设置",
+        "navigationStyle": "custom"
       }
     },
     {

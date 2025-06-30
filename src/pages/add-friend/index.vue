@@ -32,7 +32,7 @@
       </view>
 
       <!-- 用户列表 -->
-      <scroll-view v-else scroll-y class="user-list">
+      <scroll-view v-else scroll-y class="user-list" :key="'user-list-' + displayUsers.length" ref="userListScroll">
         <view v-for="user in displayUsers" :key="user._id" class="user-item">
           <view class="user-info">
             <view class="avatar-container">
@@ -40,7 +40,11 @@
               <view class="online-dot" :class="{ 'online': user.status === 'online' }"></view>
             </view>
             <view class="info-content">
-              <text class="username">{{ user.username }}</text>
+              <view class="name-container">
+                <text class="username">{{ user.username }}</text>
+                <text v-if="isFriend(user._id) && getFriendRemark(user._id)" class="remark">({{ getFriendRemark(user._id) }})</text>
+                <text v-if="isFriend(user._id)" class="friend-tag">好友</text>
+              </view>
               <text class="email">{{ user.email }}</text>
             </view>
           </view>
@@ -59,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useStore } from 'vuex'
 // 确保已在main.js中全局引入uview-plus
@@ -69,6 +73,7 @@ const searchQuery = ref('')
 const searchResults = ref([])
 const isSearching = ref(false)
 const hasSearched = ref(false)
+const userListScroll = ref(null)
 
 // 获取好友列表
 const friends = computed(() => store.state.friends)
@@ -85,8 +90,19 @@ const displayUsers = computed(() => {
   if (hasSearched.value && searchQuery.value.trim()) {
     return searchResults.value;
   }
-  // 直接显示好友列表
-  return friends.value;
+  // 显示好友列表，确保处理正确的数据结构
+  if (!friends.value || !Array.isArray(friends.value)) {
+    return [];
+  }
+  return friends.value.map(friend => {
+    if (friend && friend.user) {
+      return {
+        ...friend.user,
+        remark: friend.remark || ''
+      };
+    }
+    return null;
+  }).filter(Boolean); // 过滤掉null值
 })
 
 onMounted(async () => {
@@ -99,12 +115,29 @@ onMounted(async () => {
 
   try {
     isLoadingAllUsers.value = true
-    // 获取好友列表而非所有用户
-    await store.dispatch('fetchFriends')
+    // 获取好友列表和好友请求
+    await Promise.all([
+      store.dispatch('fetchFriends'),
+      store.dispatch('fetchFriendRequests')
+    ])
   } catch (error) {
-    console.error('Failed to fetch friends:', error)
+    console.error('Failed to fetch data:', error)
   } finally {
     isLoadingAllUsers.value = false
+  }
+})
+
+// 每次页面显示时刷新数据
+onShow(async () => {
+  if (store.getters.isAuthenticated) {
+    try {
+      await Promise.all([
+        store.dispatch('fetchFriends'),
+        store.dispatch('fetchFriendRequests')
+      ])
+    } catch (error) {
+      console.error('Failed to refresh data:', error)
+    }
   }
 })
 
@@ -126,7 +159,22 @@ const handleSearch = async () => {
     if (response.success && response.users) {
       console.log(response.users);
       
-      searchResults.value = response.users
+      // 处理搜索结果，标记是否为好友
+      searchResults.value = response.users.map(user => {
+        // 检查是否为好友
+        const friend = friends.value.find(f => f.user._id === user._id);
+        if (friend) {
+          return {
+            ...user,
+            remark: friend.remark || ''
+          };
+        }
+        return user;
+      });
+      
+      // 等待DOM更新后再进行滚动操作
+      await nextTick();
+      
       // 不需要在这里显示toast，因为已经有空状态UI了
     } else {
       searchResults.value = []
@@ -156,7 +204,19 @@ const clearSearch = () => {
 
 // 判断是否已经是好友
 const isFriend = (userId) => {
-  return friends.value.some(friend => friend.user._id === userId)
+  if (!friends.value || !Array.isArray(friends.value) || !userId) {
+    return false;
+  }
+  return friends.value.some(friend => friend && friend.user && friend.user._id === userId);
+}
+
+// 获取好友备注
+const getFriendRemark = (userId) => {
+  if (!friends.value || !Array.isArray(friends.value) || !userId) {
+    return '';
+  }
+  const friend = friends.value.find(friend => friend && friend.user && friend.user._id === userId);
+  return friend && friend.remark ? friend.remark : '';
 }
 
 const isCurrentUser = (userId) => {
@@ -171,7 +231,10 @@ const hasSentRequest = (userId) => {
 
 // 判断是否已接收到好友请求
 const hasReceivedRequest = (userId) => {
-  return pendingRequests.value.some(request => request.sender._id === userId)
+  if (!pendingRequests.value || !Array.isArray(pendingRequests.value) || !userId) {
+    return false;
+  }
+  return pendingRequests.value.some(request => request && request.sender && request.sender._id === userId);
 }
 
 // 发送好友请求
@@ -209,33 +272,44 @@ const handleSendRequest = async (userId) => {
 
 // 接受好友请求
 const handleAcceptRequest = async (userId) => {
+  if (!pendingRequests.value || !Array.isArray(pendingRequests.value) || !userId) {
+    return;
+  }
+  
   // 找到对应的请求ID
-  const request = pendingRequests.value.find(req => req.sender._id === userId)
-  if (!request) return
+  const request = pendingRequests.value.find(req => req && req.sender && req.sender._id === userId);
+  if (!request) return;
   
   try {
-    const response = await store.dispatch('acceptFriendRequest', request._id)
+    const response = await store.dispatch('acceptFriendRequest', request._id);
     if (response.success) {
       uni.showToast({
         title: response.message || '已添加好友',
         icon: 'success'
-      })
+      });
+      
+      // 刷新数据
+      await Promise.all([
+        store.dispatch('fetchFriends'),
+        store.dispatch('fetchFriendRequests')
+      ]);
+      
       // 刷新搜索结果
       if (searchQuery.value.trim()) {
-        await handleSearch()
+        await handleSearch();
       }
     } else {
       uni.showToast({
         title: response.message || '添加好友失败',
         icon: 'none'
-      })
+      });
     }
   } catch (error) {
-    console.error('Failed to accept friend request:', error)
+    console.error('Failed to accept friend request:', error);
     uni.showToast({
       title: '添加好友失败',
       icon: 'none'
-    })
+    });
   }
 }
 
@@ -314,7 +388,7 @@ const handleStartChat = async (userId) => {
 .search-btn {
   width: 120rpx;
   height: 72rpx;
-  background-color: var(--primary-color);
+  background-color: #07c160;
   color: #ffffff;
   border-radius: 36rpx;
   display: flex;
@@ -390,11 +464,31 @@ const handleStartChat = async (userId) => {
   flex-direction: column;
 }
 
+.name-container {
+  display: flex;
+  align-items: center;
+}
+
 .username {
   font-size: 32rpx;
   color: #333;
   margin-bottom: 8rpx;
   font-weight: 500;
+}
+
+.remark {
+  font-size: 26rpx;
+  color: #999;
+  margin-left: 8rpx;
+}
+
+.friend-tag {
+  font-size: 22rpx;
+  color: #ffffff;
+  background-color: #1989fa;
+  padding: 2rpx 10rpx;
+  border-radius: 10rpx;
+  margin-left: 12rpx;
 }
 
 .email {
@@ -419,7 +513,7 @@ const handleStartChat = async (userId) => {
 }
 
 .action-btn.add {
-  background-color: var(--primary-color);
+  background-color: #07c160;
   color: #ffffff;
 }
 

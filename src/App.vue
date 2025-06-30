@@ -12,13 +12,14 @@ import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
 import { mapState, mapActions } from 'vuex'
 import { loginTUICallKit } from '@/utils/tuiCallKit'
 import { watch } from 'vue'
+import { updateContactsBadge, updateConversationTabBadge, updateAllBadges } from '@/utils/badgeManager'
 
 const store = useStore()
 
 // 监听好友请求数量变化，更新通讯录角标
 watch(() => store.getters.pendingFriendRequestsCount, (newCount) => {
   if (newCount !== undefined) {
-    updateContactsTabBadge(newCount)
+    updateContactsBadge(newCount)
   }
 })
 
@@ -29,55 +30,50 @@ watch(() => store.getters.unreadCount, (newCount) => {
   }
 })
 
-// 更新通讯录Tab角标
-const updateContactsTabBadge = (count) => {
-  if (count > 0) {
-    // 设置角标
-    uni.setTabBarBadge({
-      index: 1, // 通讯录的索引
-      text: count.toString()
-    }).catch(err => {
-      console.log('Failed to set contacts badge:', err)
-    })
-  } else {
-    // 移除角标
-    uni.removeTabBarBadge({
-      index: 1
-    }).catch(err => {
-      // 忽略可能的错误（如果角标不存在）
-      console.log('No contacts badge to remove')
-    })
+// 监听好友备注变化，更新相关页面标题
+watch(() => store.state.friends, () => {
+  // 如果当前在聊天页面，更新标题
+  const pages = getCurrentPages()
+  const currentPage = pages[pages.length - 1]
+  
+  if (currentPage && currentPage.route && currentPage.route.includes('pages/chat/index')) {
+    // 获取当前聊天ID
+    const chatId = currentPage.$vm.chatId
+    if (chatId) {
+      // 找到对应的聊天
+      const chat = store.state.chats.find(c => c._id === chatId)
+      if (chat) {
+        // 更新标题
+        const currentUser = store.getters.currentUser
+        if (!chat.isGroupChat && currentUser) {
+          const otherUser = chat.users.find(u => u._id !== currentUser._id)
+          if (otherUser) {
+            // 查找好友数据
+            const friendData = store.state.friends.find(f => f.user._id === otherUser._id)
+            if (friendData) {
+              const title = friendData.remark || otherUser.username || '未知用户'
+              uni.setNavigationBarTitle({ title })
+            }
+          }
+        }
+      }
+    }
   }
-}
+}, { deep: true })
 
-// 更新会话Tab角标
-const updateConversationTabBadge = (count) => {
-  if (count > 0) {
-    // 设置角标
-    uni.setTabBarBadge({
-      index: 0, // 会话的索引
-      text: count.toString()
-    }).catch(err => {
-      console.log('Failed to set conversation badge:', err)
-    })
-  } else {
-    // 移除角标
-    uni.removeTabBarBadge({
-      index: 0
-    }).catch(err => {
-      // 忽略可能的错误（如果角标不存在）
-      console.log('No conversation badge to remove')
-    })
-  }
-}
-
+// 应用启动时初始化
 onLaunch(async () => {
   console.log('App Launch')
+
+  // 禁用截屏和录屏功能
+  disableScreenshotsAndRecording()
+  
   // 检查是否有token，如果有则初始化WebSocket连接和获取用户信息
   const token = uni.getStorageSync('token')
   if (token) {
     // 初始化WebSocket连接
     store.dispatch('websocket/initWebSocket', token)
+    
     // 获取用户信息
     try {
       const result = await store.dispatch('fetchCurrentUser')
@@ -91,15 +87,14 @@ onLaunch(async () => {
           )
         }
         
-        // 获取好友请求
+        // 获取好友请求，并更新角标
         await store.dispatch('fetchFriendRequests')
         
-        // 获取聊天列表（确保未读消息计数已加载）
+        // 获取聊天列表，并更新角标
         await store.dispatch('fetchChats')
         
-        // 初始化角标
-        updateContactsTabBadge(store.getters.pendingFriendRequestsCount)
-        updateConversationTabBadge(store.getters.unreadCount)
+        // 更新所有角标
+        updateAllBadges(store)
       }
     } catch (error) {
       console.error('Failed to fetch user info:', error)
@@ -110,9 +105,6 @@ onLaunch(async () => {
       })
     }
   }
-
-  // 禁用截屏功能
-  disableScreenshots()
 })
 
 onShow(() => {
@@ -123,7 +115,7 @@ onShow(() => {
   
   // 更新通讯录角标
   if (friendRequestCount !== undefined) {
-    updateContactsTabBadge(friendRequestCount)
+    updateContactsBadge(friendRequestCount)
   }
   
   // 更新会话角标
@@ -136,38 +128,27 @@ onHide(() => {
   console.log('App Hide')
 })
 
-function disableScreenshots() {
-  // #ifdef APP-PLUS
-  try {
-    // Android平台
-    if (uni.getSystemInfoSync().platform === 'android') {
-      const main = plus.android.runtimeMainActivity();
-      const window = main.getWindow();
-      const FLAG_SECURE = 0x00002000;
-      window.addFlags(FLAG_SECURE);
-      console.log('Android截屏限制已启用');
-    } 
-    // iOS平台
-    else if (uni.getSystemInfoSync().platform === 'ios') {
-      const UIScreen = plus.ios.importClass("UIScreen");
-      const UIWindow = plus.ios.importClass("UIWindow");
-      const UIApplication = plus.ios.importClass("UIApplication");
-      
-      const mainScreen = UIScreen.mainScreen();
-      const windows = UIApplication.sharedApplication().windows();
-      
-      for (let i = 0; i < windows.count(); i++) {
-        const window = windows.objectAtIndex(i);
-        window.setScreen(mainScreen);
-      }
-      
-      console.log('iOS截屏限制已启用');
+function disableScreenshotsAndRecording() {
+    // #ifdef APP-PLUS && APP-ANDROID
+    try {
+        const activity = plus.android.runtimeMainActivity();
+        const WindowManager = plus.android.importClass("android.view.WindowManager");
+        const LayoutParams = WindowManager.LayoutParams;
+        
+        // 获取当前 Window
+        const window = activity.getWindow();
+        
+        // 添加 FLAG_SECURE（禁止截屏和录屏）
+        window.addFlags(LayoutParams.FLAG_SECURE);
+        
+        console.log("已禁用截屏和录屏");
+    } catch (e) {
+        console.error("禁用失败:", e);
     }
-  } catch (e) {
-    console.error('禁用截屏功能失败:', e);
-  }
-  // #endif
+    // #endif
 }
+
+
 </script>
 
 <style lang="scss">

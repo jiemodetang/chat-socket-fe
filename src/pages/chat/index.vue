@@ -1,9 +1,15 @@
 <template>
   <view class="chat-container">
-    <!-- 顶部操作栏 -->
-    <view class="action-bar">
-      <view class="more-btn" @click="showMoreOptions">
-        <u-icon name="more-dot-fill" size="24" color="#333"></u-icon>
+    <!-- 自定义导航栏 -->
+    <view class="custom-navbar">
+      <view class="navbar-left" @click="goBack">
+        <u-icon name="arrow-left" size="19" color="#000"></u-icon>
+      </view>
+      <view class="navbar-title">
+        <text>{{ chatTitle }}</text>
+      </view>
+      <view class="navbar-right" @click="showMoreOptions">
+        <u-icon name="more-dot-fill" size="20" color="#000"></u-icon>
       </view>
     </view>
     
@@ -13,6 +19,10 @@
       ref="scrollViewRef"
       scroll-y 
       class="message-list" 
+      :style="{ 
+        height: `calc(100vh - 100rpx - ${inputAreaBottom}px)`,
+        paddingBottom: isKeyboardShow ? '20px' : '0px'
+      }"
       :scroll-into-view="toView"
       :scroll-with-animation="true"
       :scroll-anchoring="true"
@@ -119,7 +129,7 @@
     </scroll-view>
 
     <!-- 输入框区域 -->
-    <view class="input-area">
+    <view class="input-area" :style="{ bottom: inputAreaBottom + 'px', transition: 'bottom 0.25s' }">
       <view class="input-wrapper">
         <!-- 录音组件 -->
         <VoiceRecorder :onAudioRecorded="handleAudioRecorded" />
@@ -231,7 +241,7 @@
             <view class="input-label">备注名</view>
             <view class="input-wrapper">
               <textarea 
-                v-model="remarkText" 
+                :value="remarkText" 
                 placeholder="请输入备注名" 
                 :adjust-position="false"
                 :cursor-spacing="20" 
@@ -320,6 +330,9 @@ const showRemarkPopup = ref(false)
 const remarkTarget = ref(null)
 const remarkText = ref('')
 
+// 定义输入框的底部位置
+const inputAreaBottom = ref(0)
+
 // 获取当前用户
 const currentUser = computed(() => {
   const user = store.getters.currentUser;
@@ -339,6 +352,38 @@ const isGroupChat = computed(() => {
   return chat ? chat.isGroupChat : false
 })
 
+// 聊天标题
+const chatTitle = computed(() => {
+  const chat = store.state.chats.find(c => c._id === chatId.value)
+  if (!chat) return '聊天'
+  
+  if (chat.isGroupChat) {
+    return chat.chatName || '群聊'
+  } else {
+    // 在单聊中，显示对方的名称
+    const currentUserValue = store.getters.currentUser
+    if (!currentUserValue) {
+      return '未知用户'
+    } else {
+      const otherUser = chat.users.find(u => u._id !== currentUserValue._id)
+      
+      if (!otherUser) {
+        return '未知用户'
+      } else {
+        // 查找好友数据，优先使用备注
+        const friendData = store.state.friends.find(f => f.user._id === otherUser._id)
+        
+        // 优先使用备注，如果没有备注则使用用户名
+        if (friendData && friendData.remark) {
+          return friendData.remark
+        } else {
+          return otherUser.username || '未知用户'
+        }
+      }
+    }
+  }
+})
+
 // 判断是否可以发送消息
 const canSend = computed(() => messageText.value.trim().length > 0)
 
@@ -351,9 +396,26 @@ const setChatTitle = (chat) => {
     title = chat.chatName || '群聊'
   } else {
     // 在单聊中，显示对方的名称
-    const currentUserEmail = store.getters.currentUser?.email
-    const otherUser = chat.users.find(u => u.email !== currentUserEmail)
-    title = otherUser ? otherUser.username : '未知用户'
+    const currentUserValue = store.getters.currentUser
+    if (!currentUserValue) {
+      title = '未知用户'
+    } else {
+      const otherUser = chat.users.find(u => u._id !== currentUserValue._id)
+      
+      if (!otherUser) {
+        title = '未知用户'
+      } else {
+        // 查找好友数据，优先使用备注
+        const friendData = store.state.friends.find(f => f.user._id === otherUser._id)
+        
+        // 优先使用备注，如果没有备注则使用用户名
+        if (friendData && friendData.remark) {
+          title = friendData.remark
+        } else {
+          title = otherUser.username || '未知用户'
+        }
+      }
+    }
   }
   
   // 设置导航栏标题
@@ -481,7 +543,13 @@ onMounted(() => {
     markMessagesAsRead();
   }
   
-
+  // 获取状态栏高度并设置CSS变量
+  uni.getSystemInfo({
+    success: (res) => {
+      const statusBarHeight = res.statusBarHeight || 20;
+      document.documentElement.style.setProperty('--status-bar-height', `${statusBarHeight}px`);
+    }
+  });
   
   // 仅在APP环境下初始化TUICallKit
   // #ifdef APP-PLUS
@@ -623,12 +691,32 @@ const sendMessage = async () => {
 // 处理输入框获取焦点
 const handleInputFocus = () => {
   isKeyboardShow.value = true
+  // 监听键盘高度
+  uni.onKeyboardHeightChange(res => {
+    const keyboardHeight = res.height
+    if (keyboardHeight > 0) {
+      // 设置输入区域样式
+      inputAreaBottom.value = keyboardHeight
+      
+      // 滚动到底部
+      setTimeout(() => {
+        scrollToBottom()
+      }, 300)
+    } else {
+      // 键盘收起，恢复原始位置
+      inputAreaBottom.value = 0
+    }
+  })
   scrollToBottom();
 }
 
 // 处理输入框失去焦点
 const handleInputBlur = () => {
   isKeyboardShow.value = false
+  // 键盘收起，恢复原始位置
+  inputAreaBottom.value = 0
+  // 移除键盘高度监听
+  uni.offKeyboardHeightChange()
 }
 
 // 判断是否显示日期分割线
@@ -677,13 +765,36 @@ const getSenderName = (message) => {
   
   // 如果是群聊，显示发送者名称
   if (isGroupChat.value) {
-    return message.sender.username || '未知用户'
+    const sender = message.sender
+    
+    // 查找好友数据，优先使用备注
+    const friendData = store.state.friends.find(f => f.user._id === sender._id)
+    
+    // 优先使用备注，如果没有备注则使用用户名
+    if (friendData && friendData.remark) {
+      return friendData.remark
+    }
+    
+    return sender.username || '未知用户'
   }
   
   // 如果是单聊，显示对方名称
-  const currentUserEmail = store.getters.currentUser?.email
-  const otherUser = store.state.chats.find(c => c._id === chatId.value)?.users.find(u => u.email !== currentUserEmail)
-  return otherUser?.username || '未知用户'
+  const currentUser = store.getters.currentUser
+  if (!currentUser) return '未知用户'
+  
+  const otherUser = store.state.chats.find(c => c._id === chatId.value)?.users.find(u => u._id !== currentUser._id)
+  
+  if (!otherUser) return '未知用户'
+  
+  // 查找好友数据，优先使用备注
+  const friendData = store.state.friends.find(f => f.user._id === otherUser._id)
+  
+  // 优先使用备注，如果没有备注则使用用户名
+  if (friendData && friendData.remark) {
+    return friendData.remark
+  }
+  
+  return otherUser.username || '未知用户'
 }
 
 // 预览图片
@@ -1140,16 +1251,37 @@ const getFileIconName = (fileName) => {
 
 // 显示更多选项
 const showMoreOptions = () => {
+  console.log('Showing more options popup')
+  
+  // 如果是群聊，直接跳转到群聊设置页面
+  if (isGroupChat.value) {
+    uni.navigateTo({
+      url: `/pages/group-settings/index?id=${chatId.value}`
+    })
+    return
+  }
+  
+  // 非群聊显示原来的弹窗
   showMorePopup.value = true
+}
+
+// 返回上一页
+const goBack = () => {
+  uni.navigateBack()
 }
 
 // 处理添加备注
 const handleAddRemark = () => {
+  console.log('handleAddRemark called')
   showMorePopup.value = false
   
   // 获取当前聊天对象
   const chat = store.state.chats.find(c => c._id === chatId.value)
-  if (!chat) return
+  console.log('Current chat:', chat)
+  if (!chat) {
+    console.error('Chat not found with ID:', chatId.value)
+    return
+  }
   
   let targetUser
   if (isGroupChat.value) {
@@ -1161,41 +1293,63 @@ const handleAddRemark = () => {
     targetUser = otherUser
   }
   
-  if (!targetUser) return
+  console.log('Target user for remark:', targetUser)
+  if (!targetUser) {
+    console.error('Target user not found')
+    return
+  }
   
   // 获取当前备注
   let currentRemark = ''
   if (!isGroupChat.value) {
     // 查找当前好友的备注
     const friendData = store.state.friends.find(f => f.user._id === targetUser._id)
+    console.log('Found friend data:', friendData)
     if (friendData) {
       currentRemark = friendData.remark || ''
     }
   }
   
+  console.log('Current remark:', currentRemark)
+  
   // 显示自定义备注弹窗
-  showRemarkPopup.value = true
   remarkTarget.value = targetUser
   remarkText.value = currentRemark
+  showRemarkPopup.value = true
 }
 
 // 保存备注
 const saveRemark = async () => {
-  if (!remarkTarget.value || !remarkTarget.value._id) return
+  console.log('Saving remark for target:', remarkTarget.value)
+  if (!remarkTarget.value || !remarkTarget.value._id) {
+    console.error('No valid remark target found')
+    return
+  }
   
   try {
+    console.log('Dispatching updateFriendRemark with:', {
+      friendId: remarkTarget.value._id,
+      remark: remarkText.value.trim()
+    })
     // 更新备注
     const result = await store.dispatch('updateFriendRemark', {
       friendId: remarkTarget.value._id,
       remark: remarkText.value.trim()
     })
     
+    console.log('Update remark result:', result)
     if (result.success) {
       uni.showToast({
         title: '备注已更新',
         icon: 'success'
       })
       showRemarkPopup.value = false
+      
+      // 更新聊天标题
+      const chat = store.state.chats.find(c => c._id === chatId.value)
+      if (chat) {
+        setChatTitle(chat)
+      }
     } else {
       uni.showToast({
         title: result.message || '更新备注失败',
@@ -1324,7 +1478,12 @@ const exitGroup = async (groupId) => {
 
 // 处理备注输入
 const handleRemarkInput = (e) => {
-  remarkText.value = e.detail.value;
+  console.log('Remark input event:', e)
+  if (e.detail && e.detail.value !== undefined) {
+    remarkText.value = e.detail.value
+  } else if (typeof e === 'string') {
+    remarkText.value = e
+  }
 }
 </script>
 
@@ -1338,32 +1497,62 @@ const handleRemarkInput = (e) => {
   overflow: hidden;
 }
 
-/* 顶部操作栏样式 */
-.action-bar {
+/* 自定义导航栏样式 */
+.custom-navbar {
   position: fixed;
-  top: var(--status-bar-height, 20px);
+  top: 0;
+  left: 0;
   right: 0;
-  z-index: 100;
+  height: 44px;
+  padding-top: var(--status-bar-height, 20px);
+  display: flex;
+  align-items: center;
+  padding-left: 5px;
+  padding-right: 10px;
+  z-index: 999999999999;
+  background-color: #F8F8F8;
+  border-bottom: 1px solid #e5e5e5;
+  box-sizing: content-box;
+}
+
+.navbar-left {
+  width: 40px;
   height: 44px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 24rpx;
-  z-index: 99999;
+  justify-content: center;
+  padding-right: 5px;
 }
 
-.more-btn {
-  width: 44px;
+.navbar-right {
+  width: 40px;
   height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+.navbar-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 500;
+  color: #000;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 10px;
+}
+
 .message-list {
   flex: 1;
   height: calc(100vh - 100rpx); /* 减去输入框高度 */
   padding: 0;
+  padding-top: calc(var(--status-bar-height, 20px) + 44px); /* 状态栏 + 导航栏高度 */
+  padding-bottom: env(safe-area-inset-bottom); /* 添加安全区域底部边距 */
   position: relative;
   box-sizing: border-box;
   -webkit-overflow-scrolling: touch; /* 增加弹性滚动效果 */
@@ -1759,18 +1948,38 @@ const handleRemarkInput = (e) => {
   background-color: #f7f7f7;
   border-top: 1rpx solid #e5e5e5;
   z-index: 100;
-  height: 100rpx;
+  height: auto;
+  min-height: 100rpx;
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  transition: bottom 0.25s;
+  padding-bottom: calc(16rpx + constant(safe-area-inset-bottom)); 
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
 }
 
 .input-wrapper {
   display: flex;
   align-items: center;
   gap: 16rpx;
-  width: 100%;
+  width: 97%;
   height: 68rpx; /* 34px */
+  background-color: #ffffff;
+  border-radius: 8rpx;
+  padding: 0 5rpx 0 0;
+}
+
+/* 录音按钮在输入框容器内的样式 */
+.input-wrapper .voice-btn {
+  width: 60rpx;
+  height: 60rpx;
+  margin-left: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  background: transparent;
+  border: none;
 }
 
 .message-input {
@@ -1781,6 +1990,9 @@ const handleRemarkInput = (e) => {
   font-size: 28rpx;
   height: 68rpx; /* 34px */
   line-height: 40rpx;
+  border: none; /* 移除边框 */
+  outline: none; /* 移除轮廓 */
+  box-shadow: none; /* 移除阴影 */
 }
 
 .send-btn {
@@ -2059,7 +2271,6 @@ const handleRemarkInput = (e) => {
 }
 
 .input-wrapper {
-  border: 1px solid #e5e5e5;
   border-radius: 8rpx;
   background-color: #f8f8f8;
   padding: 16rpx;

@@ -84,9 +84,10 @@
 
 <script setup>
 import { onShow } from '@dcloudio/uni-app'
-import { ref, computed, onMounted} from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 import { formatTime, formatDate } from '@/utils/dateFormat'
+import { updateConversationTabBadge } from '@/utils/badgeManager'
 
 const store = useStore()
 const searchText = ref('')
@@ -116,11 +117,7 @@ onShow(async () => {
     
     // 清除会话tab的角标，因为用户已经看到了会话列表
     // 但保留各个会话的未读计数
-    uni.removeTabBarBadge({
-      index: 0
-    }).catch(err => {
-      console.log('No badge to remove')
-    })
+    updateConversationTabBadge(0)
   } catch (error) {
     console.error('Failed to initialize chat list:', error)
     uni.showToast({
@@ -128,6 +125,12 @@ onShow(async () => {
       icon: 'none'
     })
   }
+})
+
+// 监听未读消息数量变化
+watch(() => store.getters.unreadCount, (newCount) => {
+  // 更新Tab角标
+  updateConversationTabBadge(newCount)
 })
 
 // 获取聊天列表
@@ -221,18 +224,25 @@ const getChatName = (chat) => {
     return chat.chatName || '群聊'
   } else {
     // 在单聊中，显示对方的名称
-    console.log(
-      store.getters.currentUser
-    );
+    const currentUser = store.getters.currentUser
+    if (!currentUser) return '未知用户'
     
-    const currentUserEmail = store.getters.currentUser?.email
     // 确保找到的是对方用户，并且确保chat.users存在
     const otherUser = chat.users && chat.users.length > 0 
-      ? chat.users.find(u => u.email !== currentUserEmail)
+      ? chat.users.find(u => u._id !== currentUser._id)
       : null
     
-    // 优先使用对方的昵称，如果没有则使用用户名
-    return otherUser?.username || '未知用户'
+    if (!otherUser) return '未知用户'
+    
+    // 查找好友数据，优先使用备注
+    const friendData = store.state.friends.find(f => f.user._id === otherUser._id)
+    
+    // 优先使用备注，如果没有备注则使用用户名
+    if (friendData && friendData.remark) {
+      return friendData.remark
+    }
+    
+    return otherUser.username || '未知用户'
   }
 }
 

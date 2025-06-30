@@ -2,6 +2,8 @@ import { createStore } from 'vuex'
 import api from '../utils/api'
 import websocket from './modules/websocket'
 import { loginTUICallKit } from '../utils/tuiCallKit'
+import { updateContactsBadge } from '../utils/badgeManager'
+import { watch } from 'vue'
 
 const store = createStore({
   state: {
@@ -33,6 +35,8 @@ const store = createStore({
       state.messages = {}
       state.friends = []
       state.allUsers = []
+      state.unreadMessages = {}
+      state.friendRequests = []
       uni.removeStorageSync('token')
     },
     // 聊天相关
@@ -43,6 +47,21 @@ const store = createStore({
       const exists = state.chats.find(c => c._id === chat._id)
       if (!exists) {
         state.chats.push(chat)
+      }
+    },
+    REMOVE_CHAT(state, chatId) {
+      state.chats = state.chats.filter(c => c._id !== chatId);
+      // 清除相关消息
+      if (state.messages[chatId]) {
+        delete state.messages[chatId];
+      }
+      // 清除未读计数
+      if (state.unreadMessages[chatId]) {
+        delete state.unreadMessages[chatId];
+      }
+      // 如果正在查看该聊天，清除当前聊天
+      if (state.currentChat === chatId) {
+        state.currentChat = null;
       }
     },
     SET_CURRENT_CHAT(state, chatId) {
@@ -136,9 +155,15 @@ const store = createStore({
       state.friends = state.friends.filter(f => f.user._id !== friendId)
     },
     UPDATE_FRIEND_REMARK(state, { friendId, remark }) {
+      console.log('UPDATE_FRIEND_REMARK mutation called with:', { friendId, remark })
+      console.log('Current friends state:', JSON.stringify(state.friends))
       const friendIndex = state.friends.findIndex(f => f.user._id === friendId)
+      console.log('Found friend index:', friendIndex)
       if (friendIndex !== -1) {
         state.friends[friendIndex].remark = remark
+        console.log('Updated friend remark successfully')
+      } else {
+        console.error('Friend not found in state with ID:', friendId)
       }
     },
     // 好友请求相关
@@ -295,7 +320,7 @@ const store = createStore({
       try {
         const chat = await api.chats.createGroupChat(groupData)
         commit('ADD_CHAT', chat.chat)
-        return chat.chat
+        return  { success: true, chat: chat.chat }
       } catch (error) {
         return { success: false }
       }
@@ -369,6 +394,10 @@ const store = createStore({
       try {
         const response = await api.users.getFriendRequests()
         commit('SET_FRIEND_REQUESTS', response.requests)
+        
+        // 更新通讯录Tab角标
+        updateContactsBadge(response.requests.length)
+        
         return { 
           success: true, 
           requests: response.requests 
@@ -390,6 +419,10 @@ const store = createStore({
         // 更新好友列表
         await dispatch('fetchFriends')
         
+        // 更新通讯录Tab角标
+        const requestCount = store.state.friendRequests.length
+        updateContactsBadge(requestCount)
+        
         return { 
           success: true, 
           message: response.message || '已接受好友请求',
@@ -408,6 +441,11 @@ const store = createStore({
       try {
         const response = await api.users.rejectFriendRequest(requestId)
         commit('REMOVE_FRIEND_REQUEST', requestId)
+        
+        // 更新通讯录Tab角标
+        const requestCount = store.state.friendRequests.length
+        updateContactsBadge(requestCount)
+        
         return { 
           success: true, 
           message: response.message || '已拒绝好友请求'
@@ -442,11 +480,15 @@ const store = createStore({
     },
 
     async updateFriendRemark({ commit }, { friendId, remark }) {
+      console.log('updateFriendRemark called with:', { friendId, remark })
       try {
+        console.log('Calling API to update friend remark')
         const response = await api.users.updateFriendRemark(friendId, remark)
+        console.log('API response:', response)
         commit('UPDATE_FRIEND_REMARK', { friendId, remark })
         return { success: true, friendData: response.friendData }
       } catch (error) {
+        console.error('Error updating friend remark:', error)
         return { success: false, message: error.message || '更新好友备注失败' }
       }
     }

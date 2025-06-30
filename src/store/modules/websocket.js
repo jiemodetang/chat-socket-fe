@@ -1,4 +1,5 @@
 import websocketService from '@/utils/websocket';
+import { updateContactsBadge } from '@/utils/badgeManager';
 
 const state = {
   isConnected: false,
@@ -114,14 +115,9 @@ const actions = {
       // 更新好友请求列表 - 通过API获取最新的好友请求列表
       dispatch('fetchFriendRequests', null, { root: true });
       
-      // 立即更新通讯录Tab角标
+      // 更新通讯录Tab角标 - 立即更新，因为API可能需要时间
       const currentCount = rootState.friendRequests.length + 1; // +1 因为新请求可能还未加载
-      uni.setTabBarBadge({
-        index: 1, // 通讯录的索引
-        text: currentCount.toString()
-      }).catch(err => {
-        console.log('Failed to set contacts badge:', err)
-      });
+      updateContactsBadge(currentCount);
     });
 
     // 好友请求被接受通知
