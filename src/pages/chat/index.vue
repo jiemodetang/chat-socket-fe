@@ -1402,10 +1402,23 @@ const handleAddRemark = () => {
   let currentRemark = ''
   if (!isGroupChat.value) {
     // 查找当前好友的备注
-    const friendData = store.state.friends.find(f => f.user._id === targetUser._id)
+    console.log('Looking for friend with ID:', targetUser._id)
+    console.log('Current friends in state:', JSON.stringify(store.state.friends))
+    
+    // 尝试多种方式查找好友数据
+    let friendData = store.state.friends.find(f => f.user._id === targetUser._id)
+    
+    // 如果没找到，尝试不同的匹配方式
+    if (!friendData) {
+      console.log('Friend not found by user._id, trying other methods')
+      friendData = store.state.friends.find(f => f._id === targetUser._id)
+    }
+    
     console.log('Found friend data:', friendData)
     if (friendData) {
       currentRemark = friendData.remark || ''
+    } else {
+      console.warn('Could not find friend data for user:', targetUser._id)
     }
   }
   
@@ -1422,17 +1435,34 @@ const saveRemark = async () => {
   console.log('Saving remark for target:', remarkTarget.value)
   if (!remarkTarget.value || !remarkTarget.value._id) {
     console.error('No valid remark target found')
+    uni.showToast({
+      title: '无效的好友信息',
+      icon: 'none'
+    })
     return
   }
   
   try {
+    // 确认好友关系存在
+    const targetId = remarkTarget.value._id
+    // 检查是否存在这个好友
+    const friendExists = store.state.friends.some(f => 
+      (f.user && f.user._id === targetId) || 
+      f._id === targetId
+    )
+    
+    if (!friendExists) {
+      console.warn('Friend relationship might not exist, proceeding anyway')
+    }
+    
     console.log('Dispatching updateFriendRemark with:', {
-      friendId: remarkTarget.value._id,
+      friendId: targetId,
       remark: remarkText.value.trim()
     })
+    
     // 更新备注
     const result = await store.dispatch('updateFriendRemark', {
-      friendId: remarkTarget.value._id,
+      friendId: targetId,
       remark: remarkText.value.trim()
     })
     

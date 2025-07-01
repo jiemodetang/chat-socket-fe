@@ -157,13 +157,28 @@ const store = createStore({
     UPDATE_FRIEND_REMARK(state, { friendId, remark }) {
       console.log('UPDATE_FRIEND_REMARK mutation called with:', { friendId, remark })
       console.log('Current friends state:', JSON.stringify(state.friends))
-      const friendIndex = state.friends.findIndex(f => f.user._id === friendId)
+      // 先尝试通过user._id查找
+      let friendIndex = state.friends.findIndex(f => f.user._id === friendId)
+      
+      // 如果没找到，尝试直接通过_id查找
+      if (friendIndex === -1) {
+        friendIndex = state.friends.findIndex(f => f._id === friendId)
+      }
+      
+      // 如果仍然没找到，再尝试通过user对象进行查找
+      if (friendIndex === -1) {
+        friendIndex = state.friends.findIndex(f => {
+          return f.user && (f.user._id === friendId || f.user.id === friendId)
+        })
+      }
+      
       console.log('Found friend index:', friendIndex)
       if (friendIndex !== -1) {
         state.friends[friendIndex].remark = remark
         console.log('Updated friend remark successfully')
       } else {
         console.error('Friend not found in state with ID:', friendId)
+        console.log('Available friend IDs:', state.friends.map(f => f.user?._id || 'undefined'))
       }
     },
     // 好友请求相关
@@ -194,6 +209,26 @@ const store = createStore({
             messages[messageIndex].readBy.push(userId)
           }
         }
+      }
+    },
+    // 更新完整的好友数据
+    UPDATE_FRIEND_DATA(state, friendData) {
+      console.log('UPDATE_FRIEND_DATA called with:', friendData)
+      if (!friendData || !friendData._id) {
+        console.error('Invalid friend data provided')
+        return
+      }
+      
+      // 查找是否存在这个好友
+      const index = state.friends.findIndex(f => f._id === friendData._id)
+      if (index !== -1) {
+        // 更新现有好友数据
+        console.log(`Updating friend at index ${index}`)
+        state.friends[index] = friendData
+      } else {
+        // 可能是新的好友，添加到列表中
+        console.log('Friend not found in state, adding to friends list')
+        state.friends.push(friendData)
       }
     }
   },
@@ -485,8 +520,20 @@ const store = createStore({
         console.log('Calling API to update friend remark')
         const response = await api.users.updateFriendRemark(friendId, remark)
         console.log('API response:', response)
-        commit('UPDATE_FRIEND_REMARK', { friendId, remark })
-        return { success: true, friendData: response.friendData }
+        
+        if (response && response.success) {
+          // 如果API返回了更新后的好友数据，使用它来更新状态
+          if (response.friendData) {
+            console.log('Using friendData from API response')
+            commit('UPDATE_FRIEND_DATA', response.friendData)
+          } else {
+            // 否则使用传入的参数更新状态
+            commit('UPDATE_FRIEND_REMARK', { friendId, remark })
+          }
+          return { success: true, friendData: response.friendData }
+        } else {
+          throw new Error(response?.message || '服务器未返回成功状态')
+        }
       } catch (error) {
         console.error('Error updating friend remark:', error)
         return { success: false, message: error.message || '更新好友备注失败' }
