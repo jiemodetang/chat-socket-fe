@@ -2,8 +2,8 @@
     "name" : "畅聊社",
     "appid" : "__UNI__C045C71",
     "description" : "Socket Chat Application",
-    "versionName" : "1.0.8",
-    "versionCode" : 112,
+    "versionName" : "1.0.9",
+    "versionCode" : 113,
     "transformPx" : false,
     "uniStatistics" : {
         "enable" : false
@@ -158,6 +158,20 @@
                     "isCloud" : true,
                     "bought" : 1,
                     "pid" : "18466",
+                    "parameters" : {}
+                }
+            },
+            "me-record" : {
+                "__plugin_info__" : {
+                    "name" : "android录屏原生插件",
+                    "description" : "可配置录屏是否录制声音, 支持动态禁止和允许录屏, 录屏文件自动保存到相册",
+                    "platforms" : "Android",
+                    "url" : "https://ext.dcloud.net.cn/plugin?id=7066",
+                    "android_package_name" : "socket.io",
+                    "ios_bundle_id" : "socket.io",
+                    "isCloud" : true,
+                    "bought" : 1,
+                    "pid" : "7066",
                     "parameters" : {}
                 }
             }

@@ -21,7 +21,7 @@
       class="message-list" 
       :style="{ 
         height: `calc(100vh - 100rpx - ${inputAreaBottom}px)`,
-        paddingBottom: isKeyboardShow ? '20px' : '0px'
+        paddingBottom: '10px'
       }"
       :scroll-into-view="toView"
       :scroll-with-animation="true"
@@ -123,31 +123,59 @@
             </view>
           </template>
           <!-- 占位，防止最后一条被输入框遮挡 -->
-          <view class="message-placeholder" id="message-bottom"></view>
+          <view class="message-placeholder" id="message-bottom">
+            <!-- <view style="height: 5rpx;"></view> -->
+          </view>
         </view>
       </view>
     </scroll-view>
 
     <!-- 输入框区域 -->
-    <view class="input-area" :style="{ bottom: inputAreaBottom + 'px', transition: 'bottom 0.25s' }">
+    <view 
+      class="input-area" 
+      :style="{ 
+        bottom: `${inputAreaBottom}px`,
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        zIndex: 1000
+      }"
+    >
       <view class="input-wrapper">
-        <!-- 录音组件 -->
-        <VoiceRecorder :onAudioRecorded="handleAudioRecorded" />
+        <!-- 语音/键盘切换按钮 -->
+        <view class="voice-switch-btn" @click="toggleVoiceMode">
+          <u-icon :name="isVoiceMode ? 'list-dot' : 'mic'" size="24" color="#666"></u-icon>
+        </view>
 
+        <!-- 文本输入框 (键盘模式) -->
         <textarea 
+          v-if="!isVoiceMode"
           class="message-input" 
           v-model="messageText" 
           placeholder="输入消息..." 
           :adjust-position="false"
-          :cursor-spacing="20" 
+          :cursor-spacing="10" 
           :show-confirm-bar="false" 
-          :auto-height="false"
+          :auto-height="true"
+          :fixed="true"
           :maxlength="-1" 
           @confirm="sendMessage"
           @focus="handleInputFocus" 
           @blur="handleInputBlur" 
           @input="handleTyping"
         />
+        
+        <!-- 按住说话按钮 (语音模式) -->
+        <view 
+          v-else
+          class="voice-record-btn"
+          @touchstart.prevent="startRecording" 
+          @touchend.prevent="stopRecording" 
+          @touchcancel.prevent="cancelRecording"
+          @touchmove.prevent="handleTouchMove"
+        >
+          <text>按住 说话</text>
+        </view>
 
         <!-- 加号按钮 -->
         <view class="plus-btn" @click="showActionSheet">
@@ -159,6 +187,17 @@
         </view>
       </view>
     </view>
+    
+    <!-- 录音提示 -->
+    <u-popup :show="showRecordingTip" mode="center" :closeable="false">
+      <view class="recording-tip">
+        <view class="recording-icon">
+          <u-icon name="mic" size="48" color="#fff"></u-icon>
+        </view>
+        <text class="recording-text">{{ recordingTipText }}</text>
+        <text v-if="recordingTipText === '松开手指，取消发送'" class="cancel-record-tip">手指上滑，取消发送</text>
+      </view>
+    </u-popup>
 
     <!-- 底部弹出菜单 -->
     <u-popup :show="showPopup" mode="bottom" @close="showPopup = false" :safe-area-inset-bottom="true">
@@ -275,17 +314,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useStore } from 'vuex'
-import { onLoad, onShow } from '@dcloudio/uni-app'
-import { currentConfig } from '../../config'
-import { useWebSocket } from '@/composables/useWebSocket'
+import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
+import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
+import { formatCallDuration } from '@/utils/tuiCallKit'
 import { uploadChatFile } from '@/utils/upload'
 import { openDocument } from '@/utils/fileUpload'
-import { formatDate, formatTime, formatDuration, formatFileSize } from '@/utils/dateFormat'
-import VoiceRecorder from '@/components/VoiceRecorder.vue'
-
-import { loginTUICallKit, startCall as tuiStartCall, onCallEvent, offCallEvent, formatCallDuration } from '@/utils/tuiCallKit'
+import { useWebSocket } from '@/composables/useWebSocket'
+import { loginTUICallKit, onCallEvent, offCallEvent } from '@/utils/tuiCallKit'
+import { currentConfig } from '@/config'
+import { recorder, isRecorderSupported } from '@/utils/recorder'
 import XeUpload from '@/components/FileUploader.vue'
 
 // 导入TUICallKit插件
@@ -494,15 +533,17 @@ watch(() => store.state.currentChat, (newChatId) => {
 
 // 定义滚动到底部的逻辑
 const scrollToBottom = () => {
-  // 重置toView，强制触发滚动
+  // 先清空，再设置，强制触发滚动
   toView.value = '';
   
   // 使用nextTick确保DOM已更新
   nextTick(() => {
-    // 立即设置滚动目标，不使用延时
+    // 设置滚动目标为底部元素
+    
     setTimeout(() => {
-      toView.value = 'message-bottom';
-    }, 500);
+    toView.value = 'message-bottom';
+     
+    }, 800);
   });
 }
 
@@ -514,9 +555,15 @@ const onScrollToLower = () => {
 // 监听消息列表变化
 watch(() => messages.value?.length, (newLength, oldLength) => {
   if (newLength > oldLength || !oldLength) {
-    nextTick(() => {
-      scrollToBottom()
-    })
+    // 消息数量增加时，延迟滚动到底部，确保新消息渲染完成
+    setTimeout(() => {
+      scrollToBottom();
+      
+      // 再次延迟滚动，处理可能的图片或文件消息
+      setTimeout(() => {
+        scrollToBottom();
+      }, 500);
+    }, 100);
   }
 }, { immediate: true })
 
@@ -550,6 +597,12 @@ onMounted(() => {
       document.documentElement.style.setProperty('--status-bar-height', `${statusBarHeight}px`);
     }
   });
+  
+  // 初始化录音功能
+  checkRecorderAvailability();
+  if (isRecorderEnabled.value) {
+    initRecorderManager();
+  }
   
   // 仅在APP环境下初始化TUICallKit
   // #ifdef APP-PLUS
@@ -690,33 +743,73 @@ const sendMessage = async () => {
 
 // 处理输入框获取焦点
 const handleInputFocus = () => {
-  isKeyboardShow.value = true
-  // 监听键盘高度
-  uni.onKeyboardHeightChange(res => {
-    const keyboardHeight = res.height
-    if (keyboardHeight > 0) {
-      // 设置输入区域样式
-      inputAreaBottom.value = keyboardHeight
-      
-      // 滚动到底部
-      setTimeout(() => {
-        scrollToBottom()
-      }, 300)
-    } else {
-      // 键盘收起，恢复原始位置
-      inputAreaBottom.value = 0
+  isKeyboardShow.value = true;
+  
+  // 获取系统信息
+  uni.getSystemInfo({
+    success: (sysInfo) => {
+      // 监听键盘高度变化
+      if (typeof uni.onKeyboardHeightChange === 'function') {
+        uni.onKeyboardHeightChange(res => {
+          const keyboardHeight = res.height;
+          console.log('键盘高度:', keyboardHeight);
+          
+          if (keyboardHeight > 0) {
+            // 设置输入区域底部位置为键盘高度
+            // 这样输入框会紧贴键盘上边缘
+            inputAreaBottom.value = keyboardHeight;
+            
+            // 延迟滚动到底部，确保UI已更新
+            setTimeout(() => {
+              scrollToBottom();
+            }, 50);
+          } else {
+            // 键盘收起时重置底部位置
+            inputAreaBottom.value = 0;
+          }
+        });
+      } else {
+        // 不支持键盘高度监听的设备使用固定值
+        // #ifdef APP-PLUS
+        inputAreaBottom.value = 270; // App环境下的默认键盘高度
+        // #endif
+        
+        // #ifdef H5
+        inputAreaBottom.value = 270; // H5环境下的默认键盘高度
+        // #endif
+        
+        // #ifdef MP-WEIXIN
+        inputAreaBottom.value = 0; // 微信小程序环境下的处理
+        // #endif
+        
+        setTimeout(() => {
+          scrollToBottom();
+        }, 300);
+      }
     }
-  })
+  });
+  
+  // 立即滚动到底部
   scrollToBottom();
 }
 
 // 处理输入框失去焦点
 const handleInputBlur = () => {
-  isKeyboardShow.value = false
-  // 键盘收起，恢复原始位置
-  inputAreaBottom.value = 0
+  // 标记键盘已隐藏
+  isKeyboardShow.value = false;
+  
+  // 重置输入区域位置
+  inputAreaBottom.value = 0;
+  
   // 移除键盘高度监听
-  uni.offKeyboardHeightChange()
+  if (typeof uni.offKeyboardHeightChange === 'function') {
+    uni.offKeyboardHeightChange();
+  }
+  
+  // 延迟滚动到底部，确保UI已更新
+  setTimeout(() => {
+    scrollToBottom();
+  }, 100);
 }
 
 // 判断是否显示日期分割线
@@ -908,8 +1001,10 @@ const uploadImage = async (filePath) => {
           fileUrl: fullUrl
         })
         
-        // 立即滚动到底部显示新上传的图片
-        scrollToBottom()
+        // 延迟滚动到底部，确保图片加载完成
+        setTimeout(() => {
+          scrollToBottom();
+        }, 300);
       }
     }
   }).catch(error => {
@@ -940,8 +1035,10 @@ const handleAudioRecorded = (filePath, duration) => {
           duration: duration
         })
         
-        // 立即滚动到底部显示新上传的音频
-        scrollToBottom()
+        // 延迟滚动到底部，确保消息渲染完成
+        setTimeout(() => {
+          scrollToBottom();
+        }, 300);
       }
     }
   }).catch(error => {
@@ -985,8 +1082,11 @@ const handleUploadCallback = (e) => {
               originalFileName: fileName || decodedFileName || '文件消息'
             }
           );
-          // 立即滚动到底部显示新上传的文件
-          scrollToBottom();
+          
+          // 延迟滚动到底部，确保消息渲染完成
+          setTimeout(() => {
+            scrollToBottom();
+          }, 300);
         }
       }
     }).catch(error => {
@@ -1074,10 +1174,10 @@ const markMessagesAsRead = () => {
 
 // 处理图片加载完成
 const handleImageLoad = () => {
-    // 立即滚动到底部，确保图片加载后能完全显示
-    nextTick(() => {
-        scrollToBottom();
-    });
+  // 图片加载完成后再次滚动到底部
+  setTimeout(() => {
+    scrollToBottom();
+  }, 200);
 }
 
 // 跳转到通话页面
@@ -1169,17 +1269,16 @@ const startCall = (targetUserId, callType = 1) => {
 
 // 移除通话事件监听
 const removeCallEventListeners = () => {
-  offCallEvent('onCallEnd', callEndHandler);
-  offCallEvent('onUserReject', callRejectedHandler);
-  offCallEvent('onUserNoResponse', callNoResponseHandler);
-  offCallEvent('onUserLineBusy', callBusyHandler);
-  offCallEvent('onCallCancelled', callCancelledHandler);
-  
-  // 清除定时器
-  if (callMessageTimer) {
-    clearTimeout(callMessageTimer);
-    callMessageTimer = null;
+  // #ifdef APP-PLUS
+  // 移除通话事件监听
+  if (typeof offCallEvent === 'function') {
+    offCallEvent('onCallEnd', callEndHandler);
+    offCallEvent('onUserReject', callRejectedHandler);
+    offCallEvent('onUserNoResponse', callNoResponseHandler);
+    offCallEvent('onUserLineBusy', callBusyHandler);
+    offCallEvent('onCallCancelled', callCancelledHandler);
   }
+  // #endif
 }
 
 // 获取文件图标类
@@ -1485,6 +1584,141 @@ const handleRemarkInput = (e) => {
     remarkText.value = e
   }
 }
+
+// 语音相关功能
+// 语音模式
+const isVoiceMode = ref(false)
+const showRecordingTip = ref(false)
+const recordingTipText = ref('松开 结束')
+const isRecorderEnabled = ref(false)
+
+// 检查是否支持录音功能
+const checkRecorderAvailability = () => {
+  isRecorderEnabled.value = isRecorderSupported()
+  if (!isRecorderEnabled.value) {
+    console.log('当前平台不支持录音功能')
+  }
+}
+
+// 初始化录音管理器
+const initRecorderManager = () => {
+  if (!isRecorderEnabled.value) {
+    console.log('当前平台不支持录音功能')
+    return
+  }
+
+  try {
+    // 初始化录音管理器
+    const isInitialized = recorder.init()
+    if (!isInitialized) {
+      console.error('录音管理器初始化失败')
+      return
+    }
+
+    // 设置录音开始回调
+    recorder.setOnStart(() => {
+      console.log('录音开始')
+    })
+
+    // 设置录音结束回调
+    recorder.setOnStop((res) => {
+      console.log('录音结束:', JSON.stringify(res))
+      if (res.duration < 1000) {
+        uni.showToast({
+          title: '录音时间太短',
+          icon: 'none'
+        })
+        return
+      }
+      
+      // 上传录音文件
+      handleAudioRecorded(res.tempFilePath, res.duration)
+    })
+
+    // 设置录音错误回调
+    recorder.setOnError((res) => {
+      console.error('录音错误:', res)
+      uni.showToast({
+        title: '录音失败',
+        icon: 'none'
+      })
+      showRecordingTip.value = false
+    })
+  } catch (error) {
+    console.error('初始化录音管理器失败:', error)
+  }
+}
+
+// 开始录音
+const startRecording = () => {
+  if (!isRecorderEnabled.value) {
+    uni.showToast({
+      title: '当前平台不支持录音功能',
+      icon: 'none'
+    })
+    return
+  }
+
+  showRecordingTip.value = true
+  recordingTipText.value = '松开 结束'
+
+  // 开始录音
+  recorder.start()
+}
+
+// 停止录音
+const stopRecording = () => {
+  if (!showRecordingTip.value) return
+  
+  showRecordingTip.value = false
+  recordingTipText.value = '按住 说话'
+  
+  // 停止录音
+  recorder.stop()
+}
+
+// 取消录音
+const cancelRecording = () => {
+  if (!showRecordingTip.value) return
+  
+  showRecordingTip.value = false
+  recordingTipText.value = '按住 说话'
+  
+  // 停止录音
+  recorder.stop()
+  
+  uni.showToast({
+    title: '已取消录音',
+    icon: 'none'
+  })
+}
+
+// 处理触摸移动
+const handleTouchMove = (e) => {
+  if (!showRecordingTip.value) return
+  
+  const touch = e.touches[0]
+  const startY = e.target.offsetTop
+  const moveY = touch.clientY
+  
+  // 如果上滑超过50px，显示"松开手指，取消发送"
+  if (startY - moveY > 50) {
+    recordingTipText.value = '松开手指，取消发送'
+  } else {
+    recordingTipText.value = '松开 结束'
+  }
+}
+
+// 切换语音模式
+const toggleVoiceMode = () => {
+  isVoiceMode.value = !isVoiceMode.value
+  
+  // 如果切换到语音模式，检查录音功能
+  if (isVoiceMode.value && !isRecorderEnabled.value) {
+    checkRecorderAvailability()
+    initRecorderManager()
+  }
+}
 </script>
 
 <style scoped>
@@ -1557,9 +1791,6 @@ const handleRemarkInput = (e) => {
   box-sizing: border-box;
   -webkit-overflow-scrolling: touch; /* 增加弹性滚动效果 */
   scroll-behavior: smooth; /* 平滑滚动 */
-  overflow-anchor: auto; /* 优化滚动锚定 */
-  overscroll-behavior: contain; /* 防止滚动串联 */
-  will-change: scroll-position; /* 优化滚动性能 */
 }
 
 .message-wrapper {
@@ -1590,9 +1821,11 @@ const handleRemarkInput = (e) => {
 }
 
 .message-placeholder {
-  height: 20rpx; /* 底部留白，防止最后一条消息被输入框遮挡 */
+  height: 0rpx; /* 增加底部留白高度 */
   width: 100%;
   flex-shrink: 0;
+  margin-bottom: 30rpx;
+  background-color: transparent;
 }
 
 .message-item {
@@ -1940,33 +2173,23 @@ const handleRemarkInput = (e) => {
 
 /* 输入区域样式调整 */
 .input-area {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 16rpx 24rpx;
+  width: 100%;
+  padding: 12rpx 24rpx;
   background-color: #f7f7f7;
   border-top: 1rpx solid #e5e5e5;
-  z-index: 100;
-  height: auto;
-  min-height: 100rpx;
-  display: flex;
-  align-items: center;
   box-sizing: border-box;
-  transition: bottom 0.25s;
-  padding-bottom: calc(16rpx + constant(safe-area-inset-bottom)); 
-  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  transition: all 0.2s ease-out;
 }
 
 .input-wrapper {
   display: flex;
   align-items: center;
-  gap: 16rpx;
-  width: 97%;
-  height: 68rpx; /* 34px */
-  background-color: #ffffff;
+  background-color: #f7f7f7;
   border-radius: 8rpx;
-  padding: 0 5rpx 0 0;
+  padding: 0 12rpx;
+  position: relative;
+  height: 72rpx;
+  width: 100%;
 }
 
 /* 录音按钮在输入框容器内的样式 */
@@ -1984,20 +2207,23 @@ const handleRemarkInput = (e) => {
 
 .message-input {
   flex: 1;
+  height: 72rpx;
+  min-height: 36rpx;
+  max-height: 160rpx;
+  font-size: 30rpx;
+  line-height: 36rpx;
+  padding: 16rpx 0;
+  box-sizing: border-box;
   background-color: #ffffff;
   border-radius: 8rpx;
-  padding: 8rpx 16rpx;
-  font-size: 28rpx;
-  height: 68rpx; /* 34px */
-  line-height: 40rpx;
-  border: none; /* 移除边框 */
-  outline: none; /* 移除轮廓 */
-  box-shadow: none; /* 移除阴影 */
+  padding-left: 16rpx;
+  padding-right: 16rpx;
+  margin: 0 12rpx;
 }
 
 .send-btn {
   width: 100rpx;
-  height: 68rpx; /* 34px */
+  height: 60rpx;
   background-color: #07c160;
   color: #ffffff;
   border-radius: 8rpx;
@@ -2005,15 +2231,17 @@ const handleRemarkInput = (e) => {
   align-items: center;
   justify-content: center;
   font-size: 28rpx;
+  margin-left: 12rpx;
+  flex-shrink: 0;
 }
 
 .plus-btn {
-  width: 68rpx; /* 34px */
-  height: 68rpx; /* 34px */
+  width: 60rpx;
+  height: 60rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #07c160;
+  flex-shrink: 0;
 }
 
 /* 消息布局调整 */
@@ -2357,5 +2585,104 @@ const handleRemarkInput = (e) => {
 .preview-original {
   font-size: 26rpx;
   color: #999;
+}
+
+.voice-switch-btn {
+  width: 60rpx;
+  height: 60rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 12rpx;
+}
+
+.voice-record-btn {
+  width: 100%;
+  height: 60rpx;
+  background-color: #07c160;
+  color: #ffffff;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  margin-left: 12rpx;
+  flex-shrink: 0;
+}
+
+.recording-tip {
+  background-color: rgba(0, 0, 0, 0.7);
+  border-radius: 16rpx;
+  padding: 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 300rpx;
+  width: 300rpx;
+  justify-content: center;
+}
+
+.recording-icon {
+  width: 120rpx;
+  height: 120rpx;
+  background-color: #07c160;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 30rpx;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.recording-text {
+  color: #ffffff;
+  font-size: 32rpx;
+  font-weight: 500;
+  margin-top: 20rpx;
+}
+
+.cancel-record-tip {
+  color: #ff4d4f;
+  margin-top: 20rpx;
+  font-size: 28rpx;
+}
+
+.voice-switch-btn {
+  width: 60rpx;
+  height: 60rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.voice-record-btn {
+  flex: 1;
+  height: 72rpx;
+  background-color: #f7f7f7;
+  color: #333333;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30rpx;
+  margin: 0 12rpx;
+  border: 1rpx solid #e5e5e5;
 }
 </style>
